@@ -24,6 +24,10 @@ class SlackWebClient(Protocol):
         self, *, channel: str, text: str, thread_ts: str | None
     ) -> Mapping[str, object]: ...
 
+    async def reactions_add(
+        self, *, channel: str, name: str, timestamp: str
+    ) -> Mapping[str, object]: ...
+
 
 class Slack:
     name = "slack"
@@ -34,6 +38,7 @@ class Slack:
         bot_token: str,
         app_token: str,
         web_client: SlackWebClient | None = None,
+        ack_emoji: str | None = "eyes",
     ) -> None:
         self._bot_token = bot_token
         self._app_token = app_token
@@ -44,6 +49,7 @@ class Slack:
         self._socket_client: SocketModeClient | None = None
         self._receiver: MessageReceiver | None = None
         self._closed = asyncio.Event()
+        self._ack_emoji = ack_emoji
 
     @classmethod
     def from_env(cls) -> Slack:
@@ -92,7 +98,20 @@ class Slack:
         event = cast(Mapping[str, object], event_value)
         message = self._to_message(payload, event)
         if message is not None:
+            await self._ack(message)
             await self._receiver(self, message)
+
+    async def _ack(self, message: Message) -> None:
+        if not self._ack_emoji:
+            return
+        channel_id = cast(str, message.metadata["channel_id"])
+        timestamp = cast(str, message.metadata["message_timestamp"])
+        try:
+            await self._web_client.reactions_add(
+                channel=channel_id, name=self._ack_emoji, timestamp=timestamp
+            )
+        except Exception:
+            pass
 
     async def reply(self, source: Message, content: str) -> Message:
         channel_id = cast(str, source.metadata["channel_id"])
@@ -180,6 +199,7 @@ class Slack:
                 {
                     "channel_id": channel_id,
                     "reply_thread_timestamp": thread_timestamp,
+                    "message_timestamp": timestamp,
                 }
             ),
         )
