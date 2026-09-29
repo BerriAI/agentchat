@@ -179,7 +179,7 @@ class Slack:
             metadata=MappingProxyType(
                 {
                     "channel_id": channel_id,
-                    "reply_thread_timestamp": None if is_direct_message else thread_timestamp,
+                    "reply_thread_timestamp": thread_timestamp,
                 }
             ),
         )
