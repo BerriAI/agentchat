@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-import re
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
@@ -16,12 +18,58 @@ from slack_sdk.web.async_client import AsyncWebClient
 from agentchat.channels.base import MessageReceiver
 from agentchat.models import Message, Sender
 
-MENTION_PATTERN = re.compile(r"<@[^>]+>\s*")
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SlackUser:
+    id: str
+    team_id: str
+    display_name: str | None
+    email: str | None
+    is_bot: bool
+    deleted: bool
+
+
+def _profile_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+class ThreadSubscriptions(Protocol):
+    async def contains(self, conversation_id: str) -> bool: ...
+
+    async def add(self, conversation_id: str) -> None: ...
+
+
+class MemoryThreadSubscriptions:
+    def __init__(self) -> None:
+        self._threads: OrderedDict[str, None] = OrderedDict()
+
+    async def contains(self, conversation_id: str) -> bool:
+        return conversation_id in self._threads
+
+    async def add(self, conversation_id: str) -> None:
+        self._threads[conversation_id] = None
+        self._threads.move_to_end(conversation_id)
+        if len(self._threads) > 1000:
+            self._threads.popitem(last=False)
 
 
 class SlackWebClient(Protocol):
+    async def auth_test(self) -> Mapping[str, object]: ...
+
+    async def users_info(self, *, user: str) -> Mapping[str, object]: ...
+
     async def chat_postMessage(
-        self, *, channel: str, text: str, thread_ts: str | None
+        self,
+        *,
+        channel: str,
+        text: str,
+        thread_ts: str | None,
+        unfurl_links: bool,
+        unfurl_media: bool,
     ) -> Mapping[str, object]: ...
 
     async def reactions_add(
@@ -39,7 +87,13 @@ class Slack:
         app_token: str,
         web_client: SlackWebClient | None = None,
         ack_emoji: str | None = "eyes",
+        workspace_id: str | None = None,
+        bot_user_id: str | None = None,
+        thread_subscriptions: ThreadSubscriptions | None = None,
+        max_pending_events: int = 64,
     ) -> None:
+        if max_pending_events < 1:
+            raise ValueError("max_pending_events must be positive")
         self._bot_token = bot_token
         self._app_token = app_token
         self._web_client = cast(
@@ -50,6 +104,11 @@ class Slack:
         self._receiver: MessageReceiver | None = None
         self._closed = asyncio.Event()
         self._ack_emoji = ack_emoji
+        self._workspace_id = workspace_id
+        self._bot_user_id = bot_user_id
+        self._threads = thread_subscriptions or MemoryThreadSubscriptions()
+        self._max_pending_events = max_pending_events
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @classmethod
     def from_env(cls) -> Slack:
@@ -65,6 +124,13 @@ class Slack:
     async def run(self) -> None:
         if self._receiver is None:
             raise RuntimeError("Slack channel is not bound to AgentChat")
+        identity = await self._web_client.auth_test()
+        workspace_id, bot_user_id = identity.get("team_id"), identity.get("user_id")
+        if not isinstance(workspace_id, str) or not isinstance(bot_user_id, str):
+            raise RuntimeError("Slack did not return a bot identity")
+        if self._workspace_id is not None and self._workspace_id != workspace_id:
+            raise RuntimeError("Slack token belongs to a different workspace")
+        self._workspace_id, self._bot_user_id = workspace_id, bot_user_id
         self._socket_client = SocketModeClient(
             app_token=self._app_token,
             web_client=cast(AsyncWebClient, self._web_client),
@@ -88,6 +154,50 @@ class Slack:
         if self._socket_client is not None:
             close = cast(Callable[[], Awaitable[None]], self._socket_client.close)
             await close()
+        if self._tasks:
+            _, pending = await asyncio.wait(self._tasks, timeout=20)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def is_connected(self) -> bool:
+        return self._socket_client is not None and await self._socket_client.is_connected()
+
+    async def get_user(self, user_id: str) -> SlackUser:
+        """Look up a profile on demand; email requires the users:read.email scope."""
+        response = await self._web_client.users_info(user=user_id)
+        user = response.get("user")
+        if response.get("ok") is not True or not isinstance(user, Mapping):
+            raise ValueError("Slack did not return a user profile")
+        profile = user.get("profile")
+        team_id = user.get("team_id")
+        deleted, is_bot = user.get("deleted"), user.get("is_bot")
+        if (
+            user.get("id") != user_id
+            or not isinstance(team_id, str)
+            or not team_id
+            or not isinstance(profile, Mapping)
+            or not isinstance(deleted, bool)
+            or not isinstance(is_bot, bool)
+        ):
+            raise ValueError("Slack returned an invalid user profile")
+        return SlackUser(
+            id=user_id,
+            team_id=team_id,
+            display_name=(
+                _profile_text(profile.get("display_name"))
+                or _profile_text(profile.get("real_name"))
+                or _profile_text(user.get("name"))
+            ),
+            email=_profile_text(profile.get("email")),
+            is_bot=is_bot or user.get("is_app_user") is True,
+            deleted=deleted,
+        )
+
+    async def subscribe(self, message: Message) -> None:
+        """Follow untagged replies after the application accepts a channel conversation."""
+        if message.metadata.get("channel_type") != "im":
+            await self._threads.add(message.conversation_id)
 
     async def handle_event(self, payload: Mapping[str, object]) -> None:
         if self._receiver is None:
@@ -98,6 +208,10 @@ class Slack:
         event = cast(Mapping[str, object], event_value)
         message = self._to_message(payload, event)
         if message is not None:
+            if message.metadata["requires_subscription"] and not await self._threads.contains(
+                message.conversation_id
+            ):
+                return
             await self._ack(message)
             await self._receiver(self, message)
 
@@ -120,6 +234,8 @@ class Slack:
             channel=channel_id,
             text=content,
             thread_ts=thread_timestamp,
+            unfurl_links=False,
+            unfurl_media=False,
         )
         response_timestamp = str(response.get("ts", "unknown"))
         return Message(
@@ -133,6 +249,7 @@ class Slack:
                 {
                     "channel_id": channel_id,
                     "reply_thread_timestamp": thread_timestamp,
+                    "message_timestamp": response_timestamp,
                 }
             ),
         )
@@ -142,10 +259,17 @@ class Slack:
     ) -> None:
         if request.type != "events_api":
             return
-        await client.send_socket_mode_response(
-            SocketModeResponse(envelope_id=request.envelope_id)
-        )
-        await self.handle_event(request.payload)
+        if self._closed.is_set() or len(self._tasks) >= self._max_pending_events:
+            return
+        await client.send_socket_mode_response(SocketModeResponse(envelope_id=request.envelope_id))
+        task = asyncio.create_task(self.handle_event(request.payload))
+        self._tasks.add(task)
+        task.add_done_callback(self._event_done)
+
+    def _event_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.warning("Slack handler failed (%s)", type(error).__name__)
 
     def _to_message(
         self,
@@ -154,28 +278,44 @@ class Slack:
     ) -> Message | None:
         event_type = event.get("type")
         is_direct_message = event_type == "message" and event.get("channel_type") == "im"
-        if event_type != "app_mention" and not is_direct_message:
-            return None
         if event.get("bot_id") is not None or event.get("subtype") is not None:
             return None
         user_id = event.get("user")
         channel_id = event.get("channel")
         timestamp = event.get("ts")
         text = event.get("text")
-        if not isinstance(user_id, str):
+        if not isinstance(user_id, str) or not user_id or user_id == self._bot_user_id:
             return None
-        if not isinstance(channel_id, str):
+        if not isinstance(channel_id, str) or not channel_id:
             return None
-        if not isinstance(timestamp, str):
+        if not isinstance(timestamp, str) or not timestamp:
             return None
-        if not isinstance(text, str):
+        if not isinstance(text, str) or not text.strip():
             return None
-        team_id_value = payload.get("team_id", "unknown")
-        team_id = team_id_value if isinstance(team_id_value, str) else "unknown"
+        team_id = payload.get("team_id")
+        if not isinstance(team_id, str) or not team_id:
+            return None
+        if self._workspace_id is not None and team_id != self._workspace_id:
+            return None
         thread_timestamp_value = event.get("thread_ts")
+        if thread_timestamp_value is not None and (
+            not isinstance(thread_timestamp_value, str) or not thread_timestamp_value
+        ):
+            return None
         thread_timestamp = (
             thread_timestamp_value if isinstance(thread_timestamp_value, str) else timestamp
         )
+        bot_mention = f"<@{self._bot_user_id}>" if self._bot_user_id else None
+        is_channel_message = event_type == "message" and event.get("channel_type") in (
+            "channel",
+            "group",
+        )
+        is_mention = event_type == "app_mention" or (
+            is_channel_message and bot_mention is not None and bot_mention in text
+        )
+        is_thread_reply = is_channel_message and thread_timestamp_value is not None
+        if not (is_direct_message or is_mention or is_thread_reply):
+            return None
         conversation_id = (
             f"slack:{team_id}:{channel_id}"
             if is_direct_message
@@ -183,13 +323,13 @@ class Slack:
         )
         event_id_value = payload.get("event_id")
         event_id = (
-            event_id_value
-            if isinstance(event_id_value, str)
-            else f"{channel_id}:{timestamp}"
+            event_id_value if isinstance(event_id_value, str) else f"{channel_id}:{timestamp}"
         )
-        normalized_text = MENTION_PATTERN.sub("", text).strip()
+        normalized_text = text.replace(bot_mention, "").strip() if bot_mention else text.strip()
+        if not normalized_text:
+            return None
         return Message(
-            id=f"slack:{event_id}",
+            id=f"slack:{team_id}:{channel_id}:{timestamp}",
             conversation_id=conversation_id,
             channel=self.name,
             sender=Sender(id=user_id),
@@ -198,8 +338,16 @@ class Slack:
             metadata=MappingProxyType(
                 {
                     "channel_id": channel_id,
-                    "reply_thread_timestamp": thread_timestamp,
+                    "team_id": team_id,
+                    "event_id": event_id,
+                    "channel_type": "im"
+                    if is_direct_message
+                    else event.get("channel_type", "channel"),
+                    "reply_thread_timestamp": thread_timestamp_value
+                    if is_direct_message
+                    else thread_timestamp,
                     "message_timestamp": timestamp,
+                    "requires_subscription": not is_direct_message and not is_mention,
                 }
             ),
         )
