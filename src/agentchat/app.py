@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
-from agentchat.channels.base import Channel
+from agentchat.channels.base import Channel, MirroringChannel
 from agentchat.models import Message, MessageContext
 from agentchat.state.base import State
 from agentchat.state.memory import MemoryState
@@ -42,6 +42,22 @@ class AgentChat:
 
     async def reply(self, channel: Channel, source: Message, content: str) -> Message:
         response = await channel.reply(source, content)
+        await self.state.append(response)
+        return response
+
+    async def mirror(
+        self, channel: Channel, source: Message, message: Message, *, origin: str = "web"
+    ) -> Message:
+        """Post an authorized external input without invoking the agent handler.
+
+        The caller owns authorization, destination binding and durable delivery.
+        Each invocation attempts a send; do not blindly retry ambiguous failures.
+        """
+        if message.role != "user":
+            raise ValueError("Only user inputs can be mirrored")
+        if not isinstance(channel, MirroringChannel):
+            raise TypeError("This channel does not support mirroring")
+        response = await channel.mirror(source, message, origin=origin)
         await self.state.append(response)
         return response
 

@@ -25,3 +25,10 @@ class ThreadHistoryChannel(Protocol):
     """Optional channel capability: authoritative thread messages before the current turn."""
 
     async def thread_history(self, source: Message, *, limit: int = 50) -> tuple[Message, ...]: ...
+
+
+@runtime_checkable
+class MirroringChannel(Protocol):
+    """Optional transport for an authorized user input from another surface."""
+
+    async def mirror(self, source: Message, message: Message, *, origin: str) -> Message: ...
