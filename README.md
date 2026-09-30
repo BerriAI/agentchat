@@ -113,6 +113,21 @@ needed. Applications decide whether a returned user, including Slack Connect
 users, bots and deactivated users, is eligible for an operation. Treat profile
 fields as data, and match email against the destination system's real records.
 
+## Slack thread context
+
+`await slack.thread_history(message, limit=50)` reads the thread root and recent
+replies before the current message from Slack's `conversations.replies` API.
+Returned `Message` objects preserve sender IDs; only this bot's messages have the
+assistant role. This lets a new process recover a shared conversation without
+mixing users' credentials or private agent/tool state.
+
+Authorize the current sender before fetching history. History is context, not
+authorization to execute earlier participants' requests. Keep speaker identities
+when passing it to an agent. Lookup uses the installed token's history scopes;
+Slack API errors propagate. Pagination is bounded to 500 messages and fails on
+incomplete results. The returned context retains the root plus the latest replies
+within `limit` (2–100); a new root message has no earlier thread history.
+
 ## Core interface
 
 ```python
