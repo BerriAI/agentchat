@@ -233,6 +233,7 @@ class Slack:
                     conversation_id=source.conversation_id, channel=self.name,
                     sender=Sender(id=cast(str, sender)), text=cast(str, text),
                     role="assistant" if sender == self._bot_user_id else "user",
+                    thread_id=cast(str, thread),
                     metadata=MappingProxyType({"message_timestamp": ts}),
                 )
                 if ts == thread:
@@ -300,6 +301,7 @@ class Slack:
             sender=Sender(id="agentchat", display_name="AgentChat"),
             text=content,
             role="assistant",
+            thread_id=source.thread_id,
             metadata=MappingProxyType(
                 {
                     "channel_id": channel_id,
@@ -390,6 +392,8 @@ class Slack:
             sender=Sender(id=user_id),
             text=normalized_text,
             role="user",
+            thread_id=thread_timestamp_value if is_direct_message else thread_timestamp,
+            addressed=is_direct_message or is_mention,
             metadata=MappingProxyType(
                 {
                     "channel_id": channel_id,

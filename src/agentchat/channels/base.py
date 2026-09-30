@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from agentchat.models import Message
 
@@ -18,3 +18,10 @@ class Channel(Protocol):
     async def close(self) -> None: ...
 
     async def reply(self, source: Message, content: str) -> Message: ...
+
+
+@runtime_checkable
+class ThreadHistoryChannel(Protocol):
+    """Optional channel capability: authoritative thread messages before the current turn."""
+
+    async def thread_history(self, source: Message, *, limit: int = 50) -> tuple[Message, ...]: ...

@@ -233,6 +233,10 @@ def test_follows_only_explicitly_subscribed_threads_and_preserves_people(channel
 
         @app.on_message
         async def respond(context):
+            assert context.message.thread_id == "1.0"
+            assert context.message.addressed == (
+                context.message.metadata["message_timestamp"] == "1.0"
+            )
             await slack.subscribe(context.message)
             return context.message.text
 
