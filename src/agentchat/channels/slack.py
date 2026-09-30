@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -61,6 +61,8 @@ class SlackWebClient(Protocol):
     async def auth_test(self) -> Mapping[str, object]: ...
 
     async def users_info(self, *, user: str) -> Mapping[str, object]: ...
+
+    async def conversations_replies(self, **kwargs: object) -> Mapping[str, object]: ...
 
     async def chat_postMessage(
         self,
@@ -193,6 +195,59 @@ class Slack:
             is_bot=is_bot or user.get("is_app_user") is True,
             deleted=deleted,
         )
+
+    async def thread_history(self, source: Message, *, limit: int = 50) -> tuple[Message, ...]:
+        """Read the root and recent replies before this turn, with Slack sender identities."""
+        if not 2 <= limit <= 100:
+            raise ValueError("History limit must be between 2 and 100")
+        channel = source.metadata["channel_id"]
+        thread = source.metadata.get("reply_thread_timestamp")
+        current = str(source.metadata["message_timestamp"])
+        if not thread or (self._workspace_id and source.metadata["team_id"] != self._workspace_id):
+            raise ValueError("Expected a thread in the configured Slack workspace")
+        if current == thread:
+            return ()
+        root: Message | None = None
+        recent: deque[Message] = deque(maxlen=limit - 1)
+        cursor = ""
+        seen: set[str] = set()
+        for _ in range(5):
+            response = await self._web_client.conversations_replies(
+                channel=channel, ts=thread, latest=current, inclusive=False,
+                limit=100, cursor=cursor,
+            )
+            records = response.get("messages")
+            if response.get("ok") is not True or not isinstance(records, list):
+                raise ValueError("Slack did not return thread history")
+            for record in records:
+                if not isinstance(record, Mapping):
+                    continue
+                ts, text = record.get("ts"), record.get("text")
+                sender = record.get("user") or record.get("bot_id")
+                if not all(isinstance(value, str) and value for value in (ts, text, sender)):
+                    continue
+                if float(ts) >= float(current):
+                    continue
+                item = Message(
+                    id=f"slack:{source.metadata['team_id']}:{channel}:{ts}",
+                    conversation_id=source.conversation_id, channel=self.name,
+                    sender=Sender(id=cast(str, sender)), text=cast(str, text),
+                    role="assistant" if sender == self._bot_user_id else "user",
+                    metadata=MappingProxyType({"message_timestamp": ts}),
+                )
+                if ts == thread:
+                    root = item
+                else:
+                    recent.append(item)
+            if not response.get("has_more"):
+                return tuple(([root] if root else []) + list(recent))
+            metadata = response.get("response_metadata")
+            next_cursor = metadata.get("next_cursor") if isinstance(metadata, Mapping) else None
+            if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen:
+                raise ValueError("Slack returned invalid history pagination")
+            seen.add(next_cursor)
+            cursor = next_cursor
+        raise ValueError("Slack thread is too long; start a new thread")
 
     async def subscribe(self, message: Message) -> None:
         """Follow untagged replies after the application accepts a channel conversation."""
