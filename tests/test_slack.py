@@ -60,7 +60,8 @@ async def test_user_profile_lookup_is_explicit_and_refreshes_optional_email():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fields", [
     {"id": "UOTHER"}, {"team_id": None}, {"profile": []},
-    {"deleted": "false"}, {"is_bot": "false"},
+    {"deleted": "false"}, {"is_bot": "false"}, {"is_restricted": "false"},
+    {"is_ultra_restricted": 0}, {"is_stranger": "false"}, {"is_app_user": 1},
 ])
 async def test_profile_lookup_rejects_mismatched_or_malformed_users(fields):
     class Client(FakeSlackClient):
@@ -102,6 +103,22 @@ async def test_profile_lookup_preserves_external_workspace_and_account_status():
     slack = Slack(bot_token="test", app_token="test", web_client=Client(), workspace_id="T123")
     user = await slack.get_user("U012ABCDEF")
     assert user.team_id == "TEXTERNAL" and user.deleted and user.is_bot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["is_restricted", "is_ultra_restricted", "is_stranger"])
+async def test_profile_lookup_exposes_guest_and_external_status(flag):
+    class Client(FakeSlackClient):
+        async def users_info(self, *, user):
+            return {"ok": True, "user": {
+                "id": user, "team_id": "T123", "profile": {},
+                "deleted": False, "is_bot": False, flag: True,
+            }}
+
+    slack = Slack(bot_token="test", app_token="test", web_client=Client())
+    user = await slack.get_user("U012ABCDEF")
+    assert user.is_external == (flag == "is_stranger")
+    assert user.is_guest == (flag != "is_stranger")
 
 
 def test_slack_dm_round_trip_preserves_one_conversation() -> None:
