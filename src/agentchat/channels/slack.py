@@ -16,6 +16,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
+from agentchat.channels.slack_mirror import mirror_payload, read_mirror
 from agentchat.models import Message, Sender
 
 logger = logging.getLogger(__name__)
@@ -64,15 +65,7 @@ class SlackWebClient(Protocol):
 
     async def conversations_replies(self, **kwargs: object) -> Mapping[str, object]: ...
 
-    async def chat_postMessage(
-        self,
-        *,
-        channel: str,
-        text: str,
-        thread_ts: str | None,
-        unfurl_links: bool,
-        unfurl_media: bool,
-    ) -> Mapping[str, object]: ...
+    async def chat_postMessage(self, **kwargs: object) -> Mapping[str, object]: ...
 
     async def reactions_add(
         self, *, channel: str, name: str, timestamp: str
@@ -214,7 +207,7 @@ class Slack:
         for _ in range(5):
             response = await self._web_client.conversations_replies(
                 channel=channel, ts=thread, latest=current, inclusive=False,
-                limit=100, cursor=cursor,
+                limit=100, cursor=cursor, include_all_metadata=True,
             )
             records = response.get("messages")
             if response.get("ok") is not True or not isinstance(records, list):
@@ -228,11 +221,13 @@ class Slack:
                     continue
                 if float(ts) >= float(current):
                     continue
+                mirror = read_mirror(record, bot_user_id=self._bot_user_id)
                 item = Message(
                     id=f"slack:{source.metadata['team_id']}:{channel}:{ts}",
                     conversation_id=source.conversation_id, channel=self.name,
-                    sender=Sender(id=cast(str, sender)), text=cast(str, text),
-                    role="assistant" if sender == self._bot_user_id else "user",
+                    sender=mirror[0] if mirror else Sender(id=cast(str, sender)),
+                    text=mirror[1] if mirror else cast(str, text),
+                    role="assistant" if sender == self._bot_user_id and not mirror else "user",
                     thread_id=cast(str, thread),
                     metadata=MappingProxyType({"message_timestamp": ts}),
                 )
@@ -309,6 +304,31 @@ class Slack:
                     "message_timestamp": response_timestamp,
                 }
             ),
+        )
+
+    async def mirror(self, source: Message, message: Message, *, origin: str = "web") -> Message:
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        payload = mirror_payload(message, origin=origin)
+        channel_id = source.metadata["channel_id"]
+        thread = source.metadata.get("reply_thread_timestamp")
+        response = await self._web_client.chat_postMessage(
+            channel=channel_id, thread_ts=thread, **payload,
+        )
+        timestamp = response.get("ts")
+        if response.get("ok") is not True or not isinstance(timestamp, str) or not timestamp:
+            raise RuntimeError("Slack mirror delivery could not be confirmed")
+        return Message(
+            id=f"slack:{channel_id}:{timestamp}", conversation_id=source.conversation_id,
+            channel=self.name, sender=message.sender, text=message.text, role="user",
+            thread_id=source.thread_id,
+            metadata=MappingProxyType({
+                "channel_id": channel_id, "reply_thread_timestamp": thread,
+                "message_timestamp": timestamp, "mirrored_message_id": message.id,
+                "origin": origin,
+            }),
         )
 
     async def _handle_socket_request(

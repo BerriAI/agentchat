@@ -189,6 +189,48 @@ messages already held in your application's state store.
 
 Incoming messages are acknowledged, deduplicated, and serialized by conversation before the handler runs. Returning a string posts it to the originating Slack DM or thread
 
+## Mirroring web inputs into Slack
+
+Use `app.mirror()` to display an already accepted web input in a bound Slack
+conversation, without calling the agent handler or creating another model turn:
+
+```python
+from agentchat import Message, Sender
+
+# Authorize the signed-in user and load the session's saved Slack source first.
+external = Message(
+    id="web:session-123:message-456",  # Stable ID from your saved message
+    conversation_id=slack_source.conversation_id,
+    channel="web",
+    sender=Sender(id=verified_user.id, display_name=verified_user.name),
+    text=saved_message.text,
+    role="user",
+)
+await app.mirror(slack, slack_source, external, origin="My app web")
+```
+
+Slack shows a bot post labelled “Alice · via My app web”; it does not impersonate
+Alice's Slack account. Inputs remain `user` messages in AgentChat state and in
+native thread history, including after a restart. Only mirror metadata posted by
+the configured bot is recognized. Bot echoes never invoke the handler. Plain-text
+blocks, escaped fallback text and disabled unfurls prevent input from creating
+Slack mentions. No additional scopes are needed beyond posting/history access.
+
+The application must verify the sender, authorize sharing, and resolve the
+original conversation from a trusted session binding. Do not accept destination
+IDs or sender identity from browser input. Preserve your own rules for paused
+conversations. **Each call attempts one send.** Use a durable outbox with a unique
+key per message/chunk, save it with the web input, and mark sends in flight before
+posting. Do not automatically retry an ambiguous timeout: Slack may have accepted
+the post. A stable `Message.id` alone does not provide provider deduplication.
+
+Inputs are limited to 2,800 characters per call; split larger inputs into ordered,
+stable chunks in your outbox. `app.mirror()` appends the sent user message to state
+but never invokes a handler or claims an inbound event. If your application owns
+history, use `slack.mirror()` directly. Custom webhook adapters can implement the
+optional `MirroringChannel` capability and reuse
+`agentchat.channels.slack_mirror.mirror_payload()` for safe Slack content.
+
 ## Using an existing agent runner
 
 An application that already owns history, authorization and durable deduplication
