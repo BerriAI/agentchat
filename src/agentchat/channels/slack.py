@@ -29,6 +29,8 @@ class SlackUser:
     email: str | None
     is_bot: bool
     deleted: bool
+    is_guest: bool = False
+    is_external: bool = False
 
 
 def _profile_text(value: object) -> str | None:
@@ -172,6 +174,7 @@ class Slack:
         profile = user.get("profile")
         team_id = user.get("team_id")
         deleted, is_bot = user.get("deleted"), user.get("is_bot")
+        member_flags = ("is_app_user", "is_restricted", "is_ultra_restricted", "is_stranger")
         if (
             user.get("id") != user_id
             or not isinstance(team_id, str)
@@ -179,6 +182,7 @@ class Slack:
             or not isinstance(profile, Mapping)
             or not isinstance(deleted, bool)
             or not isinstance(is_bot, bool)
+            or any(key in user and not isinstance(user[key], bool) for key in member_flags)
         ):
             raise ValueError("Slack returned an invalid user profile")
         return SlackUser(
@@ -192,6 +196,8 @@ class Slack:
             email=_profile_text(profile.get("email")),
             is_bot=is_bot or user.get("is_app_user") is True,
             deleted=deleted,
+            is_guest=user.get("is_restricted") is True or user.get("is_ultra_restricted") is True,
+            is_external=user.get("is_stranger") is True,
         )
 
     async def subscribe(self, message: Message) -> None:
