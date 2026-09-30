@@ -5,6 +5,7 @@ import logging
 import os
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
@@ -18,6 +19,22 @@ from agentchat.channels.base import MessageReceiver
 from agentchat.models import Message, Sender
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SlackUser:
+    id: str
+    team_id: str
+    display_name: str | None
+    email: str | None
+    is_bot: bool
+    deleted: bool
+
+
+def _profile_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 class ThreadSubscriptions(Protocol):
@@ -42,6 +59,8 @@ class MemoryThreadSubscriptions:
 
 class SlackWebClient(Protocol):
     async def auth_test(self) -> Mapping[str, object]: ...
+
+    async def users_info(self, *, user: str) -> Mapping[str, object]: ...
 
     async def chat_postMessage(
         self,
@@ -143,6 +162,37 @@ class Slack:
 
     async def is_connected(self) -> bool:
         return self._socket_client is not None and await self._socket_client.is_connected()
+
+    async def get_user(self, user_id: str) -> SlackUser:
+        """Look up a profile on demand; email requires the users:read.email scope."""
+        response = await self._web_client.users_info(user=user_id)
+        user = response.get("user")
+        if response.get("ok") is not True or not isinstance(user, Mapping):
+            raise ValueError("Slack did not return a user profile")
+        profile = user.get("profile")
+        team_id = user.get("team_id")
+        deleted, is_bot = user.get("deleted"), user.get("is_bot")
+        if (
+            user.get("id") != user_id
+            or not isinstance(team_id, str)
+            or not team_id
+            or not isinstance(profile, Mapping)
+            or not isinstance(deleted, bool)
+            or not isinstance(is_bot, bool)
+        ):
+            raise ValueError("Slack returned an invalid user profile")
+        return SlackUser(
+            id=user_id,
+            team_id=team_id,
+            display_name=(
+                _profile_text(profile.get("display_name"))
+                or _profile_text(profile.get("real_name"))
+                or _profile_text(user.get("name"))
+            ),
+            email=_profile_text(profile.get("email")),
+            is_bot=is_bot or user.get("is_app_user") is True,
+            deleted=deleted,
+        )
 
     async def subscribe(self, message: Message) -> None:
         """Follow untagged replies after the application accepts a channel conversation."""

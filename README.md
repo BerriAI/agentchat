@@ -86,6 +86,33 @@ them across restarts, pass `thread_subscriptions=` with an object implementing
 The application owns that store's expiry policy. Subscribing does not authorize
 other participants; check each incoming sender independently.
 
+## Slack user profiles
+
+Slack mentions contain IDs such as `<@U012ABCDEF>`. Resolve one through the native
+[`users.info`](https://docs.slack.dev/reference/methods/users.info/) API:
+
+```python
+user = await slack.get_user("U012ABCDEF")
+user.id
+user.team_id
+user.display_name
+user.email
+user.is_bot
+user.deleted
+```
+
+Profile lookup requires `users:read`; email also requires `users:read.email`.
+Reinstall an existing Slack app after adding scopes. Email is optional, and the
+SDK never guesses it from a display name. Slack API errors, including missing
+scopes and rate limits, propagate to the caller. Malformed profiles raise
+`ValueError` without including the profile in the error message.
+
+Lookup is explicit and does not run on every message. Check the requesting user's
+authorization first and expose it as a tool in your chosen agent framework when
+needed. Applications decide whether a returned user, including Slack Connect
+users, bots and deactivated users, is eligible for an operation. Treat profile
+fields as data, and match email against the destination system's real records.
+
 ## Core interface
 
 ```python

@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from slack_sdk.errors import SlackApiError
 from slack_sdk.socket_mode.request import SocketModeRequest
 
 from agentchat import AgentChat
@@ -19,6 +20,88 @@ class FakeSlackClient:
 
     async def reactions_add(self, **kwargs):
         self.reactions.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_user_profile_lookup_is_explicit_and_refreshes_optional_email():
+    class Client(FakeSlackClient):
+        def __init__(self):
+            super().__init__()
+            self.lookups = []
+
+        async def users_info(self, *, user):
+            self.lookups.append(user)
+            profile = {"real_name": "Teammate", "display_name": "  "}
+            if len(self.lookups) == 1:
+                profile["email"] = "teammate@example.com"
+            return {"ok": True, "user": {
+                "id": "U012ABCDEF", "team_id": "T123", "profile": profile,
+                "deleted": False, "is_bot": False,
+            }}
+
+    client = Client()
+    slack = Slack(bot_token="test", app_token="test", web_client=client)
+
+    async def receive(channel, message):
+        assert message.text == "inspect <@U012ABCDEF>"
+
+    slack.bind(receive)
+    await slack.handle_event(channel_event(text="inspect <@U012ABCDEF>"))
+    assert client.lookups == []
+    user = await slack.get_user("U012ABCDEF")
+    assert (user.id, user.team_id, user.display_name, user.email) == (
+        "U012ABCDEF", "T123", "Teammate", "teammate@example.com"
+    )
+    assert not user.is_bot and not user.deleted
+    assert (await slack.get_user("U012ABCDEF")).email is None
+    assert client.lookups == ["U012ABCDEF", "U012ABCDEF"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fields", [
+    {"id": "UOTHER"}, {"team_id": None}, {"profile": []},
+    {"deleted": "false"}, {"is_bot": "false"},
+])
+async def test_profile_lookup_rejects_mismatched_or_malformed_users(fields):
+    class Client(FakeSlackClient):
+        async def users_info(self, *, user):
+            return {"ok": True, "user": {
+                "id": "U012ABCDEF", "team_id": "T123", "profile": {},
+                "is_bot": False, "deleted": False, **fields,
+            }}
+
+    slack = Slack(bot_token="test", app_token="test", web_client=Client())
+    with pytest.raises(ValueError, match="invalid user profile"):
+        await slack.get_user("U012ABCDEF")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["missing_scope", "user_not_found", "ratelimited"])
+async def test_profile_lookup_preserves_native_slack_errors(error):
+    refusal = SlackApiError("Profile lookup failed", {"ok": False, "error": error})
+
+    class Client(FakeSlackClient):
+        async def users_info(self, *, user):
+            raise refusal
+
+    slack = Slack(bot_token="test", app_token="test", web_client=Client())
+    with pytest.raises(SlackApiError) as caught:
+        await slack.get_user("U012ABCDEF")
+    assert caught.value.response["error"] == error
+
+
+@pytest.mark.asyncio
+async def test_profile_lookup_preserves_external_workspace_and_account_status():
+    class Client(FakeSlackClient):
+        async def users_info(self, *, user):
+            return {"ok": True, "user": {
+                "id": user, "team_id": "TEXTERNAL", "profile": {},
+                "deleted": True, "is_bot": False, "is_app_user": True,
+            }}
+
+    slack = Slack(bot_token="test", app_token="test", web_client=Client(), workspace_id="T123")
+    user = await slack.get_user("U012ABCDEF")
+    assert user.team_id == "TEXTERNAL" and user.deleted and user.is_bot
 
 
 def test_slack_dm_round_trip_preserves_one_conversation() -> None:

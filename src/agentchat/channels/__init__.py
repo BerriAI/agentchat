@@ -1,4 +1,4 @@
 from agentchat.channels.base import Channel
-from agentchat.channels.slack import Slack
+from agentchat.channels.slack import Slack, SlackUser
 
-__all__ = ["Channel", "Slack"]
+__all__ = ["Channel", "Slack", "SlackUser"]
