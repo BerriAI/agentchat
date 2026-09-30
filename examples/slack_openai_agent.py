@@ -12,11 +12,13 @@ agent = Agent(
     instructions="You are a helpful assistant. Keep responses concise and useful.",
 )
 
-app = AgentChat(channels=[Slack.from_env()], state=MemoryState())
+slack = Slack.from_env()
+app = AgentChat(channels=[slack], state=MemoryState())
 
 
 @app.on_message
 async def respond(context: MessageContext) -> str:
+    await slack.subscribe(context.message)
     history = await context.conversation.history(limit=30)
     result = await Runner.run(agent, input=to_openai_input(history))
     return str(result.final_output)

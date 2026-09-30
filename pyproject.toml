@@ -12,7 +12,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "BerriAI" }]
 dependencies = [
-    "slack-sdk[aiohttp]>=3.41,<4",
+    "slack-sdk>=3.41,<4",
+    "aiohttp>=3.9,<4",
 ]
 
 [project.optional-dependencies]

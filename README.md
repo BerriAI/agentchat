@@ -25,11 +25,13 @@ agent = Agent(
     instructions="You are a helpful assistant",
 )
 
-app = AgentChat(channels=[Slack.from_env()])
+slack = Slack.from_env()
+app = AgentChat(channels=[slack])
 
 
 @app.on_message
 async def respond(context):
+    await slack.subscribe(context.message)
     history = await context.conversation.history(limit=30)
     result = await Runner.run(agent, input=to_openai_input(history))
     return str(result.final_output)
@@ -47,8 +49,13 @@ Create a Slack app with Socket Mode enabled, then add these bot scopes:
 - `app_mentions:read`
 - `chat:write`
 - `im:history`
+- `channels:history`
+- `groups:history` (for private channels)
+- `reactions:write` (or set `ack_emoji=None`)
 
-Subscribe to the `app_mention` and `message.im` bot events. Install the app, then export its tokens:
+Subscribe to `app_mention`, `message.im`, `message.channels`, and `message.groups`.
+Install the app and invite it to the channels where it should respond. Existing
+installations need to be reinstalled when adding scopes. Then export its tokens:
 
 ```bash
 export SLACK_BOT_TOKEN="xoxb-..."
@@ -62,7 +69,22 @@ Run the example:
 python examples/slack_openai_agent.py
 ```
 
-Send the bot a direct message or mention it in a channel. Follow-up direct messages share one conversation. Channel mentions continue inside their Slack thread
+Send the bot a direct message or mention it in a channel. Follow-up direct messages
+share one conversation. Plain DMs receive replies in the main DM; explicit DM
+thread replies stay in that thread. Channel mentions receive replies under the
+original thread root.
+
+Call `await slack.subscribe(context.message)` after your application accepts a
+channel conversation to receive its subsequent replies without another mention.
+For an authenticated application, check the sender's access **before** subscribing.
+Unrelated channel messages and threads are ignored. Other people's mentions remain
+in the message text; only the bot's own mention is removed.
+
+Subscriptions default to memory, bounded to the latest 1,000 threads. To retain
+them across restarts, pass `thread_subscriptions=` with an object implementing
+`async contains(conversation_id) -> bool` and `async add(conversation_id) -> None`.
+The application owns that store's expiry policy. Subscribing does not authorize
+other participants; check each incoming sender independently.
 
 ## Core interface
 
@@ -84,6 +106,36 @@ await context.reply("Hello")
 ```
 
 Incoming messages are acknowledged, deduplicated, and serialized by conversation before the handler runs. Returning a string posts it to the originating Slack DM or thread
+
+## Using an existing agent runner
+
+An application that already owns history, authorization and durable deduplication
+can bind directly to the public channel API without a second `AgentChat` state store:
+
+```python
+slack = Slack.from_env()
+
+async def receive(channel, message):
+    # Verify the sender, claim the message ID and run your existing agent here.
+    await slack.subscribe(message)
+    await channel.reply(message, "Your response")
+
+slack.bind(receive)
+asyncio.run(slack.run())
+```
+
+With direct binding, the application owns deduplication and request ordering.
+`message.id` identifies the Slack message across retries and duplicate
+`app_mention`/`message` deliveries. Metadata includes the original `event_id`,
+`team_id`, `channel_id`, `channel_type`, `message_timestamp`, and reply timestamp.
+
+`Slack.run()` checks the bot identity. Pass `workspace_id=` to reject a token or
+event from another workspace. `await slack.is_connected()` exposes socket readiness.
+Socket envelopes are acknowledged before processing in tracked background tasks.
+`max_pending_events` defaults to 64; excess envelopes are left unacknowledged for
+Slack's retry policy. `await slack.close()` closes the socket, then drains tasks
+for up to 20 seconds before cancelling unfinished work. This is bounded in-process
+delivery, not a durable queue; applications performing writes need their own journal.
 
 ## Development
 
