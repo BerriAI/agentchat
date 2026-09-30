@@ -1,14 +1,16 @@
 import asyncio
+import json
 
+import pytest
 from agents import Agent, Runner
 from agents.items import ModelResponse
-from agents.models.interface import Model
+from agents.models.interface import Model, ModelTracing
 from agents.usage import Usage
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
-from agentchat import AgentChat
+from agentchat import AgentChat, Message, Sender
 from agentchat.channels import Slack
-from agentchat.integrations import to_openai_input
+from agentchat.integrations import should_reply, to_openai_input
 from agentchat.state import MemoryState
 
 
@@ -89,3 +91,45 @@ def test_openai_agent_round_trip_keeps_slack_conversation_history() -> None:
         assert len(model.inputs[1]) == 3
 
     asyncio.run(scenario())
+
+
+def test_speaker_preserving_conversion_keeps_roles_and_text_as_data():
+    messages = (
+        Message("1", "thread", "example", Sender("alice"), "Prepare a report", "user"),
+        Message("2", "thread", "example", Sender("bot"), "Which period?", "assistant"),
+        Message("3", "thread", "example", Sender("bob"), "Last quarter", "user"),
+    )
+    result = to_openai_input(messages, include_senders=True)
+    assert [item["role"] for item in result] == ["user", "assistant", "user"]
+    assert [json.loads(item["content"])["sender_id"] for item in result] == ["alice", "bot", "bob"]
+    assert json.loads(result[-1]["content"])["text"] == "Last quarter"
+    assert to_openai_input(messages)[0]["content"] == "Prepare a report"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [False, True])
+async def test_reply_filter_uses_selected_model_without_tools_or_tracing(reply):
+    class RoutingModel(StaticModel):
+        async def get_response(self, *args, **kwargs):
+            assert kwargs["tools"] == []
+            assert kwargs["handoffs"] == []
+            assert kwargs["output_schema"] is not None
+            assert kwargs["tracing"] == ModelTracing.DISABLED
+            response = await super().get_response(*args, **kwargs)
+            response.output[0].content[0].text = json.dumps({"reply": reply})
+            return response
+
+    model = RoutingModel()
+    inputs = [{"role": "user", "content": "What do you think, teammate?"}]
+    assert await should_reply(inputs, model=model) is reply
+    assert model.inputs == [inputs]
+
+
+@pytest.mark.asyncio
+async def test_reply_filter_failure_does_not_silently_authorize_a_response():
+    class Unavailable(StaticModel):
+        async def get_response(self, *args, **kwargs):
+            raise TimeoutError()
+
+    with pytest.raises(TimeoutError):
+        await should_reply([{"role": "user", "content": "Hello"}], model=Unavailable())

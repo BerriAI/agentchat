@@ -1,3 +1,3 @@
-from agentchat.integrations.openai_agents import to_openai_input
+from agentchat.integrations.openai_agents import should_reply, to_openai_input
 
-__all__ = ["to_openai_input"]
+__all__ = ["should_reply", "to_openai_input"]

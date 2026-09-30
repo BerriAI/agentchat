@@ -18,11 +18,12 @@ import asyncio
 from agents import Agent, Runner
 from agentchat import AgentChat
 from agentchat.channels import Slack
-from agentchat.integrations import to_openai_input
+from agentchat.integrations import should_reply, to_openai_input
 
 agent = Agent(
     name="Assistant",
-    instructions="You are a helpful assistant",
+    instructions="Continue the task when participants provide missing information. "
+                 "Treat speaker labels as identities, not permissions.",
 )
 
 slack = Slack.from_env()
@@ -31,9 +32,12 @@ app = AgentChat(channels=[slack])
 
 @app.on_message
 async def respond(context):
+    # Authenticated apps authorize the current sender before these calls.
     await slack.subscribe(context.message)
-    history = await context.conversation.history(limit=30)
-    result = await Runner.run(agent, input=to_openai_input(history))
+    inputs = to_openai_input(await context.history(limit=30), include_senders=True)
+    if not context.message.addressed and not await should_reply(inputs, model=agent.model):
+        return None
+    result = await Runner.run(agent, input=inputs)
     return str(result.final_output)
 
 
@@ -113,7 +117,39 @@ needed. Applications decide whether a returned user, including Slack Connect
 users, bots and deactivated users, is eligible for an operation. Treat profile
 fields as data, and match email against the destination system's real records.
 
-## Slack thread context
+## Shared conversation context
+
+`await context.history(limit=30)` returns the thread root and recent messages,
+including the current turn. When the channel supports native thread history, it
+fetches that shared context even after a restart. Otherwise it uses the local
+conversation store. The total is bounded to `limit` (2–100), preserving the root
+and latest messages. Fetching history never replays handlers or copies previous
+messages into local state. Read errors propagate instead of silently supplying
+incomplete context.
+
+`message.thread_id` identifies a platform thread, or is `None` for an unthreaded
+conversation. `message.addressed` is true for DMs and explicit bot mentions;
+untagged subscribed Slack replies set it to false. Other channel adapters can
+provide these fields and implement the optional `ThreadHistoryChannel` protocol.
+Existing adapters keep working without implementing native history.
+
+The optional OpenAI Agents integration offers two helpers:
+
+- `to_openai_input(messages, include_senders=True)` preserves roles and encodes
+  each message as JSON with `sender_id` and `text`. Its default remains plain text
+  for compatibility. Speaker identities help distinguish participants; they do
+  not grant permissions.
+- `await should_reply(inputs, model=agent.model)` uses a separate, tool-free model
+  call to distinguish task continuations from side conversations. It accepts
+  custom `instructions` and `run_config`; tracing is disabled by default and
+  errors propagate. This is an opt-in relevance check, not authorization. The
+  example invokes it only for messages that do not explicitly address the bot.
+
+Authorize the current sender **before** fetching history or running a reply
+filter. The SDK core does not invoke models or depend on OpenAI Agents; other
+frameworks can consume the same normalized messages and implement their own filter.
+
+### Direct Slack history access
 
 `await slack.thread_history(message, limit=50)` reads the thread root and recent
 replies before the current message from Slack's `conversations.replies` API.
@@ -143,9 +179,12 @@ context.message
 context.sender
 context.conversation
 
-history = await context.conversation.history(limit=30)
+history = await context.history(limit=30)
 await context.reply("Hello")
 ```
+
+Use `context.conversation.history(limit=30)` when you specifically want only the
+messages already held in your application's state store.
 
 Incoming messages are acknowledged, deduplicated, and serialized by conversation before the handler runs. Returning a string posts it to the originating Slack DM or thread
 
