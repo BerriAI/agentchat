@@ -135,10 +135,11 @@ Existing adapters keep working without implementing native history.
 
 The optional OpenAI Agents integration offers two helpers:
 
-- `to_openai_input(messages, include_senders=True)` preserves roles and encodes
-  each message as JSON with `sender_id` and `text`. Its default remains plain text
-  for compatibility. Speaker identities help distinguish participants; they do
-  not grant permissions.
+- `to_openai_input(messages, include_senders=True)` labels incoming messages with
+  `Speaker: "sender-id"` above their original text. Assistant messages remain
+  unchanged so history demonstrates the intended reply format. Message newlines
+  stay intact; only sender IDs are JSON-escaped. The default preserves all text
+  unchanged. Speaker identities distinguish participants, not permissions.
 - `await should_reply(inputs, model=agent.model)` uses a separate, tool-free model
   call to distinguish task continuations from side conversations. It accepts
   custom `instructions` and `run_config`; tracing is disabled by default and

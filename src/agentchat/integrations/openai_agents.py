@@ -12,11 +12,11 @@ from agentchat.models import Message
 def to_openai_input(
     messages: tuple[Message, ...], *, include_senders: bool = False
 ) -> list[TResponseInputItem]:
-    """Convert context without losing speaker identity when include_senders is enabled."""
+    """Label incoming speakers while keeping assistant messages in their reply format."""
     return [
         {"role": message.role, "content": (
-            json.dumps({"sender_id": message.sender.id, "text": message.text})
-            if include_senders else message.text
+            f"Speaker: {json.dumps(message.sender.id)}\n\n{message.text}"
+            if include_senders and message.role == "user" else message.text
         )}
         for message in messages
     ]
