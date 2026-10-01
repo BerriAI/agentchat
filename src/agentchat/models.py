@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from agentchat.activity import WorkingStatus
     from agentchat.app import AgentChat
     from agentchat.channels.base import Channel
 
@@ -62,3 +63,13 @@ class MessageContext:
 
     async def reply(self, content: str) -> Message:
         return await self._app.reply(self._channel, self.message, content)
+
+    async def set_status(self, status: str) -> bool:
+        return await self._app.set_status(self._channel, self.message, status)
+
+    def working(
+        self, status: str = "is working…", *, refresh_interval: float = 60,
+    ) -> WorkingStatus:
+        return self._app.working(
+            self._channel, self.message, status, refresh_interval=refresh_interval,
+        )

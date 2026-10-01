@@ -14,7 +14,7 @@ agent = Agent(
                  "Keep replies concise.",
 )
 
-slack = Slack.from_env()
+slack = Slack.from_env(ack_emoji=None)
 app = AgentChat(channels=[slack], state=MemoryState())
 
 
@@ -25,8 +25,10 @@ async def respond(context: MessageContext) -> str | None:
     inputs = to_openai_input(await context.history(limit=30), include_senders=True)
     if not context.message.addressed and not await should_reply(inputs, model=agent.model):
         return None
-    result = await Runner.run(agent, input=inputs)
-    return str(result.final_output)
+    async with context.working():
+        result = await Runner.run(agent, input=inputs)
+        await context.reply(str(result.final_output))
+    return None
 
 
 if __name__ == "__main__":

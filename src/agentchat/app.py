@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
-from agentchat.channels.base import Channel, MirroringChannel
+from agentchat.activity import WorkingStatus
+from agentchat.channels.base import Channel, MirroringChannel, StatusChannel
 from agentchat.models import Message, MessageContext
 from agentchat.state.base import State
 from agentchat.state.memory import MemoryState
@@ -44,6 +45,22 @@ class AgentChat:
         response = await channel.reply(source, content)
         await self.state.append(response)
         return response
+
+    async def set_status(self, channel: Channel, source: Message, status: str) -> bool:
+        """Set or clear transient status; return False for unsupported channels."""
+        if not isinstance(channel, StatusChannel):
+            return False
+        return await channel.set_status(source, status)
+
+    def working(
+        self, channel: Channel, source: Message, status: str = "is working…",
+        *, refresh_interval: float = 60,
+    ) -> WorkingStatus:
+        """Refresh activity until context exit, including exceptions/cancellation."""
+        return WorkingStatus(
+            lambda text: self.set_status(channel, source, text), status,
+            refresh_interval=refresh_interval,
+        )
 
     async def mirror(
         self, channel: Channel, source: Message, message: Message, *, origin: str = "web"
