@@ -67,6 +67,8 @@ class SlackWebClient(Protocol):
 
     async def chat_postMessage(self, **kwargs: object) -> Mapping[str, object]: ...
 
+    async def assistant_threads_setStatus(self, **kwargs: object) -> Mapping[str, object]: ...
+
     async def reactions_add(
         self, *, channel: str, name: str, timestamp: str
     ) -> Mapping[str, object]: ...
@@ -106,12 +108,12 @@ class Slack:
         self._tasks: set[asyncio.Task[None]] = set()
 
     @classmethod
-    def from_env(cls) -> Slack:
+    def from_env(cls, *, ack_emoji: str | None = "eyes") -> Slack:
         bot_token = os.getenv("SLACK_BOT_TOKEN")
         app_token = os.getenv("SLACK_APP_TOKEN")
         if not bot_token or not app_token:
             raise RuntimeError("SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required")
-        return cls(bot_token=bot_token, app_token=app_token)
+        return cls(bot_token=bot_token, app_token=app_token, ack_emoji=ack_emoji)
 
     def bind(self, receiver: MessageReceiver) -> None:
         self._receiver = receiver
@@ -277,6 +279,32 @@ class Slack:
             )
         except Exception:
             pass
+
+    async def set_status(self, source: Message, status: str) -> bool:
+        """Set Slack's native working indicator in the existing reply thread.
+
+        Slack prefixes the app name and expires status after two minutes. Empty
+        text clears it. Plain DMs return False: setting status there would open a
+        new thread, changing the destination where users expect the answer.
+        """
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        channel_id = source.metadata.get("channel_id")
+        thread = source.metadata.get("reply_thread_timestamp")
+        if not isinstance(channel_id, str) or not channel_id:
+            raise ValueError("Expected a Slack channel destination")
+        if thread is None:
+            return False
+        if not isinstance(thread, str) or not thread:
+            raise ValueError("Expected a Slack thread destination")
+        response = await self._web_client.assistant_threads_setStatus(
+            channel_id=channel_id, thread_ts=thread, status=status,
+        )
+        if response.get("ok") is not True:
+            raise RuntimeError("Slack working status could not be confirmed")
+        return True
 
     async def reply(self, source: Message, content: str) -> Message:
         channel_id = cast(str, source.metadata["channel_id"])

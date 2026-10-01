@@ -32,3 +32,10 @@ class MirroringChannel(Protocol):
     """Optional transport for an authorized user input from another surface."""
 
     async def mirror(self, source: Message, message: Message, *, origin: str) -> Message: ...
+
+
+@runtime_checkable
+class StatusChannel(Protocol):
+    """Optional transient activity indicator, separate from conversation history."""
+
+    async def set_status(self, source: Message, status: str) -> bool: ...
