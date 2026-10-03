@@ -222,6 +222,58 @@ messages already held in your application's state store.
 
 Incoming messages are acknowledged, deduplicated, and serialized by conversation before the handler runs. Returning a string posts it to the originating Slack DM or thread
 
+## Rich replies and file uploads
+
+Send application-selected bytes and a rich reply to the accepted conversation:
+
+```python
+from agentchat import RichReply, UploadFile
+
+# Your application has authorized this sharing and verified the bytes and URL.
+files = await context.upload_files((
+    UploadFile(filename="demo.webm", content=verified_video_bytes, title="Working demo"),
+))
+await context.reply_rich(RichReply(
+    text=f"Working demo and PR: {verified_pr_url}",
+    blocks=({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"<{verified_pr_url}|View PR>"},
+    },),
+))
+```
+
+`RichReply` contains fallback `text`, optional `blocks`, and optional `attachments`.
+Blocks and attachments must match the receiving provider's format; the Slack
+adapter accepts Slack Block Kit and attachment objects. The existing `reply(str)`
+API remains available. Custom channels can implement the optional `RichReplyChannel`
+and `FileUploadChannel` protocols. Unsupported capabilities raise `TypeError`, so
+the host can choose a text or protected-link fallback explicitly.
+
+`UploadFile` carries a filename, bytes, and optional title; it does not load paths
+or fetch URLs. Uploads return `UploadedFile` receipts with a provider ID and an
+optional permalink. They do not append binary content or invented file messages
+to conversation history. Rich replies append the confirmed response, like text
+replies. Durable hosts can call `app.reply_rich(channel, source, content)` and
+`app.upload_files(channel, source, files)` with their saved source message.
+
+Slack file uploads require the bot's `files:write` scope; reinstall an existing app
+after adding it. Rich replies use `chat:write`. These APIs expose no new agent
+tools and grant no application permissions. The host owns sender authorization,
+trusted destination bindings, file selection, content checks, size budgets,
+paused-conversation rules, and durable delivery state. Each call makes one attempt;
+provider failures propagate and uploads are never retried automatically. The
+default Slack client disables automatic retries; an injected client or transport
+must also use one-attempt behavior. A timeout may mean Slack accepted a send or
+file share, so retain uncertain outcomes rather than blindly retrying them.
+
+Custom Slack webhook or rotating-OAuth adapters can reuse
+`agentchat.channels.slack_media.upload_slack_files(files, request=..., channel_id=..., thread_ts=..., before_send=...)`.
+The `request(api_method, payload)` callback supplies the host's one-attempt Slack API
+transport. The optional async `before_send()` callback rechecks host authorization
+before every allocation, byte transfer, and final share. The helper owns upload URL
+validation, transfer and receipt verification; it does not require Socket Mode.
+`rich_payload(reply)` builds content fields while the host supplies its saved routing.
+
 ## Mirroring web inputs into Slack
 
 Use `app.mirror()` to display an already accepted web input in a bound Slack

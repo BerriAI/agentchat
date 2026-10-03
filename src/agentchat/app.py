@@ -4,8 +4,14 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
 from agentchat.activity import WorkingStatus
-from agentchat.channels.base import Channel, MirroringChannel, StatusChannel
-from agentchat.models import Message, MessageContext
+from agentchat.channels.base import (
+    Channel,
+    FileUploadChannel,
+    MirroringChannel,
+    RichReplyChannel,
+    StatusChannel,
+)
+from agentchat.models import Message, MessageContext, RichReply, UploadedFile, UploadFile
 from agentchat.state.base import State
 from agentchat.state.memory import MemoryState
 
@@ -45,6 +51,22 @@ class AgentChat:
         response = await channel.reply(source, content)
         await self.state.append(response)
         return response
+
+    async def reply_rich(self, channel: Channel, source: Message, content: RichReply) -> Message:
+        """Send rich content once and append only the confirmed response to history."""
+        if not isinstance(channel, RichReplyChannel):
+            raise TypeError("This channel does not support rich replies")
+        response = await channel.reply_rich(source, content)
+        await self.state.append(response)
+        return response
+
+    async def upload_files(
+        self, channel: Channel, source: Message, files: Sequence[UploadFile],
+    ) -> tuple[UploadedFile, ...]:
+        """Upload authorized bytes once; return receipts without inventing history."""
+        if not isinstance(channel, FileUploadChannel):
+            raise TypeError("This channel does not support file uploads")
+        return await channel.upload_files(source, files)
 
     async def set_status(self, channel: Channel, source: Message, status: str) -> bool:
         """Set or clear transient status; return False for unsupported channels."""
