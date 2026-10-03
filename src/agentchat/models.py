@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -30,6 +30,32 @@ class Message:
     metadata: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     thread_id: str | None = None
     addressed: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RichReply:
+    """Fallback text and explicitly provider-compatible rich content."""
+
+    text: str
+    blocks: tuple[Mapping[str, object], ...] = ()
+    attachments: tuple[Mapping[str, object], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UploadFile:
+    """File bytes selected and authorized by the host application."""
+
+    filename: str
+    content: bytes
+    title: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UploadedFile:
+    """Confirmed provider file identity; not a conversation message."""
+
+    id: str
+    permalink: str | None = None
 
 
 class Conversation:
@@ -63,6 +89,12 @@ class MessageContext:
 
     async def reply(self, content: str) -> Message:
         return await self._app.reply(self._channel, self.message, content)
+
+    async def reply_rich(self, content: RichReply) -> Message:
+        return await self._app.reply_rich(self._channel, self.message, content)
+
+    async def upload_files(self, files: Sequence[UploadFile]) -> tuple[UploadedFile, ...]:
+        return await self._app.upload_files(self._channel, self.message, files)
 
     async def set_status(self, status: str) -> bool:
         return await self._app.set_status(self._channel, self.message, status)

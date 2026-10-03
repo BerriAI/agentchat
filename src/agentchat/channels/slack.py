@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -16,8 +16,9 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
+from agentchat.channels.slack_media import rich_payload, upload_slack_files, validate_destination
 from agentchat.channels.slack_mirror import mirror_payload, read_mirror
-from agentchat.models import Message, Sender
+from agentchat.models import Message, RichReply, Sender, UploadedFile, UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,8 @@ class MemoryThreadSubscriptions:
 
 
 class SlackWebClient(Protocol):
+    async def api_call(self, api_method: str, **kwargs: object) -> Mapping[str, object]: ...
+
     async def auth_test(self) -> Mapping[str, object]: ...
 
     async def users_info(self, *, user: str) -> Mapping[str, object]: ...
@@ -95,7 +98,7 @@ class Slack:
         self._app_token = app_token
         self._web_client = cast(
             SlackWebClient,
-            web_client or AsyncWebClient(token=bot_token),
+            web_client or AsyncWebClient(token=bot_token, retry_handlers=[]),
         )
         self._socket_client: SocketModeClient | None = None
         self._receiver: MessageReceiver | None = None
@@ -305,6 +308,48 @@ class Slack:
         if response.get("ok") is not True:
             raise RuntimeError("Slack working status could not be confirmed")
         return True
+
+    def _delivery_destination(self, source: Message) -> tuple[str, str | None]:
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        channel_id = source.metadata.get("channel_id")
+        thread = source.metadata.get("reply_thread_timestamp")
+        if not isinstance(channel_id, str) or not channel_id:
+            raise ValueError("Expected a Slack channel destination")
+        if thread is not None and (not isinstance(thread, str) or not thread):
+            raise ValueError("Expected a Slack thread destination")
+        validate_destination(channel_id, thread)
+        return channel_id, thread
+
+    async def upload_files(
+        self, source: Message, files: Sequence[UploadFile],
+    ) -> tuple[UploadedFile, ...]:
+        channel_id, thread = self._delivery_destination(source)
+
+        async def request(api: str, payload: dict[str, object]) -> Mapping[str, object]:
+            body = {"data": payload} if api == "files.getUploadURLExternal" else {"json": payload}
+            return await self._web_client.api_call(api, http_verb="POST", **body)
+
+        return await upload_slack_files(files, request=request, channel_id=channel_id,
+                                        thread_ts=thread)
+
+    async def reply_rich(self, source: Message, content: RichReply) -> Message:
+        channel_id, thread = self._delivery_destination(source)
+        response = await self._web_client.chat_postMessage(
+            channel=channel_id, thread_ts=thread, **rich_payload(content),
+        )
+        timestamp = response.get("ts")
+        if response.get("ok") is not True or not isinstance(timestamp, str) or not timestamp:
+            raise RuntimeError("Slack rich reply delivery could not be confirmed")
+        return Message(
+            id=f"slack:{channel_id}:{timestamp}", conversation_id=source.conversation_id,
+            channel=self.name, sender=Sender(id="agentchat", display_name="AgentChat"),
+            text=content.text, role="assistant", thread_id=source.thread_id,
+            metadata=MappingProxyType({"channel_id": channel_id,
+                "reply_thread_timestamp": thread, "message_timestamp": timestamp}),
+        )
 
     async def reply(self, source: Message, content: str) -> Message:
         channel_id = cast(str, source.metadata["channel_id"])
