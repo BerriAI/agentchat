@@ -6,12 +6,21 @@ from collections.abc import Awaitable, Callable, Sequence
 from agentchat.activity import WorkingStatus
 from agentchat.channels.base import (
     Channel,
+    FileDownloadChannel,
     FileUploadChannel,
     MirroringChannel,
     RichReplyChannel,
     StatusChannel,
 )
-from agentchat.models import Message, MessageContext, RichReply, UploadedFile, UploadFile
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    MessageContext,
+    RichReply,
+    UploadedFile,
+    UploadFile,
+)
 from agentchat.state.base import State
 from agentchat.state.memory import MemoryState
 
@@ -73,6 +82,17 @@ class AgentChat:
         if not isinstance(channel, StatusChannel):
             return False
         return await channel.set_status(source, status)
+
+    async def download_attachment(
+        self, channel: Channel, source: Message, attachment: Attachment,
+        *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile:
+        """Download on demand without putting file bytes in conversation history."""
+        if not isinstance(channel, FileDownloadChannel):
+            raise TypeError("This channel does not support attachment downloads")
+        if attachment not in source.attachments:
+            raise ValueError("Attachment does not belong to the source message")
+        return await channel.download_attachment(source, attachment, max_bytes=max_bytes)
 
     def working(
         self, channel: Channel, source: Message, status: str = "is working…",

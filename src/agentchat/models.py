@@ -20,6 +20,26 @@ class Sender:
 
 
 @dataclass(frozen=True, slots=True)
+class Attachment:
+    """Incoming provider file reference; metadata is advisory, never a download URL."""
+
+    id: str
+    name: str | None = None
+    media_type: str | None = None
+    size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedFile:
+    """Explicitly fetched bytes; the host owns content validation and storage."""
+
+    id: str
+    name: str
+    content: bytes = field(repr=False)
+    media_type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     id: str
     conversation_id: str
@@ -30,6 +50,7 @@ class Message:
     metadata: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     thread_id: str | None = None
     addressed: bool = True
+    attachments: tuple[Attachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +116,14 @@ class MessageContext:
 
     async def upload_files(self, files: Sequence[UploadFile]) -> tuple[UploadedFile, ...]:
         return await self._app.upload_files(self._channel, self.message, files)
+
+    async def download_attachment(
+        self, attachment: Attachment, *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile:
+        """Fetch a current-message attachment after the host authorizes the sender."""
+        return await self._app.download_attachment(
+            self._channel, self.message, attachment, max_bytes=max_bytes,
+        )
 
     async def set_status(self, status: str) -> bool:
         return await self._app.set_status(self._channel, self.message, status)
