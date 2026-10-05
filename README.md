@@ -222,6 +222,12 @@ messages already held in your application's state store.
 
 Incoming messages are acknowledged, deduplicated, and serialized by conversation before the handler runs. Returning a string posts it to the originating Slack DM or thread
 
+Slack replies display the full response by default using expanded section blocks.
+Long text replies are split across sections within a single Slack message, with
+code fences balanced across section boundaries. The original text remains the
+notification and accessibility fallback. Text replies that require more than Slack's
+50-block limit raise `ValueError` before sending; split those into separate replies.
+
 ## Rich replies and file uploads
 
 Send application-selected bytes and a rich reply to the accepted conversation:
@@ -248,6 +254,13 @@ adapter accepts Slack Block Kit and attachment objects. The existing `reply(str)
 API remains available. Custom channels can implement the optional `RichReplyChannel`
 and `FileUploadChannel` protocols. Unsupported capabilities raise `TypeError`, so
 the host can choose a text or protected-link fallback explicitly.
+
+Slack section blocks, including sections inside attachments, default to
+[`expand: true`](https://docs.slack.dev/reference/block-kit/blocks/section-block/)
+so readers do not need to click **Show more**. Set `"expand": False` on a section
+to opt into Slack's collapsed display. Other block types and explicit expansion
+choices are preserved, and the adapter does not modify your input objects.
+When a `RichReply` omits blocks, its text is rendered in expanded sections too.
 
 `UploadFile` carries a filename, bytes, and optional title; it does not load paths
 or fetch URLs. Uploads return `UploadedFile` receipts with a provider ID and an

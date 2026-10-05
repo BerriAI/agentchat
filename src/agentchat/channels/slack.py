@@ -16,7 +16,12 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
-from agentchat.channels.slack_media import rich_payload, upload_slack_files, validate_destination
+from agentchat.channels.slack_media import (
+    rich_payload,
+    text_blocks,
+    upload_slack_files,
+    validate_destination,
+)
 from agentchat.channels.slack_mirror import mirror_payload, read_mirror
 from agentchat.models import Message, RichReply, Sender, UploadedFile, UploadFile
 
@@ -357,6 +362,7 @@ class Slack:
         response = await self._web_client.chat_postMessage(
             channel=channel_id,
             text=content,
+            blocks=text_blocks(content),
             thread_ts=thread_timestamp,
             unfurl_links=False,
             unfurl_media=False,
