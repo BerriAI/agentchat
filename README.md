@@ -228,6 +228,57 @@ code fences balanced across section boundaries. The original text remains the
 notification and accessibility fallback. Text replies that require more than Slack's
 50-block limit raise `ValueError` before sending; split those into separate replies.
 
+## Incoming attachments
+
+`Message.attachments` holds a tuple of `Attachment` references with a provider
+file ID and optional name, media type and byte size. Slack accepts `file_share`
+events and file-only DMs, mentions and subscribed thread replies. Native thread
+history also retains attachment references, including messages without text.
+The existing workspace, bot-message and thread-subscription checks still apply.
+Normalizing an event never downloads files or stores private file URLs.
+
+After authorizing the sender, explicitly fetch a current-message file:
+
+```python
+@app.on_message
+async def respond(context):
+    for attachment in context.message.attachments:
+        file = await context.download_attachment(attachment, max_bytes=10 * 1024 * 1024)
+        # Validate file.content, store it, or prepare a multimodal model input.
+        # file.name and file.media_type describe the freshly fetched metadata.
+    return "Received your attachments."
+```
+
+`DownloadedFile` carries the file ID, name, bytes and optional media type. Bytes
+are never appended to AgentChat history or downloaded automatically by
+`to_openai_input`, which remains a text adapter. Applications own content
+validation, image previews, persistence, audio transcription and model-specific
+multimodal inputs. Treat file contents as untrusted reference data.
+
+Downloads require the bot's `files:read` scope; reinstall an existing Slack app
+after adding it. AgentChat resolves `files.info` by ID, validates the private
+Slack host, sends the bot token only to that host, disables redirects and checks
+both the declared size and streamed byte count. Errors and cancellation propagate
+without automatic retry. The default per-file limit is 10 MB; hosts can pass a
+different positive `max_bytes` budget. Slack normalization retains at most five
+files per message.
+
+Custom channels can implement `FileDownloadChannel`. The application-level
+`app.download_attachment(channel, source, attachment, max_bytes=...)` checks that
+the reference belongs to the source message; unsupported channels raise
+`TypeError`. Downloads from a historical Slack message can use this API with
+that historical message as `source` after the host authorizes access.
+
+Host-owned signed webhooks can reuse
+`agentchat.channels.slack_files.slack_attachments(files, limit=5)` for normalization
+and `download_slack_file(attachment, bot_token=..., request=..., max_bytes=...,
+before_download=...)` for transport. The async `request(api, payload)` callback
+authenticates the Slack metadata call. The optional guard runs before metadata
+retrieval, before downloading and before returning bytes, so hosts can recheck
+revoked access. The host remains responsible for verifying signed events,
+workspace/sender authorization, durable queues and recovering any file references
+omitted by a provider event. Event-provided download URLs are never used.
+
 ## Rich replies and file uploads
 
 Send application-selected bytes and a rich reply to the accepted conversation:

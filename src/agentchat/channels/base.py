@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, runtime_checkable
 
-from agentchat.models import Message, RichReply, UploadedFile, UploadFile
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    RichReply,
+    UploadedFile,
+    UploadFile,
+)
 
 MessageReceiver = Callable[["Channel", Message], Awaitable[None]]
 
@@ -48,6 +55,15 @@ class FileUploadChannel(Protocol):
     async def upload_files(
         self, source: Message, files: Sequence[UploadFile],
     ) -> tuple[UploadedFile, ...]: ...
+
+
+@runtime_checkable
+class FileDownloadChannel(Protocol):
+    """Optional explicit download of an attachment belonging to the source message."""
+
+    async def download_attachment(
+        self, source: Message, attachment: Attachment, *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile: ...
 
 
 @runtime_checkable

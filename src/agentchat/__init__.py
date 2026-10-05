@@ -1,6 +1,8 @@
 from agentchat.app import AgentChat
 from agentchat.models import (
+    Attachment,
     Conversation,
+    DownloadedFile,
     Message,
     MessageContext,
     RichReply,
@@ -10,6 +12,7 @@ from agentchat.models import (
 )
 
 __all__ = [
-    "AgentChat", "Conversation", "Message", "MessageContext", "RichReply", "Sender",
+    "AgentChat", "Attachment", "Conversation", "DownloadedFile", "Message", "MessageContext",
+    "RichReply", "Sender",
     "UploadFile", "UploadedFile",
 ]

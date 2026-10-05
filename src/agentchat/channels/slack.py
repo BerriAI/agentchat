@@ -16,6 +16,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
+from agentchat.channels.slack_files import download_slack_file, slack_attachments
 from agentchat.channels.slack_media import (
     rich_payload,
     text_blocks,
@@ -23,7 +24,15 @@ from agentchat.channels.slack_media import (
     validate_destination,
 )
 from agentchat.channels.slack_mirror import mirror_payload, read_mirror
-from agentchat.models import Message, RichReply, Sender, UploadedFile, UploadFile
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    RichReply,
+    Sender,
+    UploadedFile,
+    UploadFile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -225,9 +234,11 @@ class Slack:
             for record in records:
                 if not isinstance(record, Mapping):
                     continue
-                ts, text = record.get("ts"), record.get("text")
+                ts, text = record.get("ts"), record.get("text", "")
+                attachments = slack_attachments(record.get("files"))
                 sender = record.get("user") or record.get("bot_id")
-                if not all(isinstance(value, str) and value for value in (ts, text, sender)):
+                if (not all(isinstance(value, str) and value for value in (ts, sender))
+                        or not isinstance(text, str) or (not text.strip() and not attachments)):
                     continue
                 if float(ts) >= float(current):
                     continue
@@ -239,7 +250,10 @@ class Slack:
                     text=mirror[1] if mirror else cast(str, text),
                     role="assistant" if sender == self._bot_user_id and not mirror else "user",
                     thread_id=cast(str, thread),
-                    metadata=MappingProxyType({"message_timestamp": ts}),
+                    metadata=MappingProxyType({"message_timestamp": ts,
+                        "team_id": source.metadata["team_id"], "channel_id": channel,
+                        "reply_thread_timestamp": thread}),
+                    attachments=attachments,
                 )
                 if ts == thread:
                     root = item
@@ -340,6 +354,21 @@ class Slack:
         return await upload_slack_files(files, request=request, channel_id=channel_id,
                                         thread_ts=thread)
 
+    async def download_attachment(
+        self, source: Message, attachment: Attachment, *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile:
+        if (source.channel != self.name or source.role != "user"
+                or (self._workspace_id and source.metadata.get("team_id") != self._workspace_id)):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        if attachment not in source.attachments:
+            raise ValueError("Attachment does not belong to the source message")
+
+        async def request(api: str, payload: dict[str, object]) -> Mapping[str, object]:
+            return await self._web_client.api_call(api, http_verb="GET", params=payload)
+
+        return await download_slack_file(attachment, bot_token=self._bot_token,
+                                         request=request, max_bytes=max_bytes)
+
     async def reply_rich(self, source: Message, content: RichReply) -> Message:
         channel_id, thread = self._delivery_destination(source)
         response = await self._web_client.chat_postMessage(
@@ -434,19 +463,21 @@ class Slack:
     ) -> Message | None:
         event_type = event.get("type")
         is_direct_message = event_type == "message" and event.get("channel_type") == "im"
-        if event.get("bot_id") is not None or event.get("subtype") is not None:
+        if (event.get("bot_id") is not None or event.get("bot_profile") is not None
+                or event.get("subtype") not in (None, "file_share")):
             return None
         user_id = event.get("user")
         channel_id = event.get("channel")
         timestamp = event.get("ts")
-        text = event.get("text")
+        text = event.get("text", "")
+        attachments = slack_attachments(event.get("files"))
         if not isinstance(user_id, str) or not user_id or user_id == self._bot_user_id:
             return None
         if not isinstance(channel_id, str) or not channel_id:
             return None
         if not isinstance(timestamp, str) or not timestamp:
             return None
-        if not isinstance(text, str) or not text.strip():
+        if not isinstance(text, str) or (not text.strip() and not attachments):
             return None
         team_id = payload.get("team_id")
         if not isinstance(team_id, str) or not team_id:
@@ -482,7 +513,7 @@ class Slack:
             event_id_value if isinstance(event_id_value, str) else f"{channel_id}:{timestamp}"
         )
         normalized_text = text.replace(bot_mention, "").strip() if bot_mention else text.strip()
-        if not normalized_text:
+        if not normalized_text and not attachments:
             return None
         return Message(
             id=f"slack:{team_id}:{channel_id}:{timestamp}",
@@ -493,6 +524,7 @@ class Slack:
             role="user",
             thread_id=thread_timestamp_value if is_direct_message else thread_timestamp,
             addressed=is_direct_message or is_mention,
+            attachments=attachments,
             metadata=MappingProxyType(
                 {
                     "channel_id": channel_id,
