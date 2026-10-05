@@ -101,3 +101,55 @@ async def test_native_upload_exercises_real_slack_client_request_builder(monkeyp
     assert slack._web_client.retry_handlers == []
     files = await slack.upload_files(destination(), [UploadFile('demo.webm', b'video')])
     assert [file.id for file in files] == ['F1'] and len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rich', [False, True])
+@pytest.mark.parametrize('thread', [None, '1.0'])
+async def test_expanded_reply_uses_real_slack_request_builder(monkeypatch, rich, thread):
+    slack = Slack(bot_token='test-only', app_token='test-only', workspace_id='T')
+    app = AgentChat(channels=[slack])
+    message = destination(thread)
+    content = '<@U123> @here #general\n' + 'The full reply stays in one message.\n' * 200
+    requests = []
+
+    async def send(http_verb: str, api_url: str, req_args: dict) -> dict:
+        assert http_verb == 'POST' and api_url.endswith('chat.postMessage')
+        requests.append(req_args['json'])
+        return {'ok': True, 'ts': '2.0'}
+
+    monkeypatch.setattr(slack._web_client, '_send', send)
+    if rich:
+        sent = await app.reply_rich(slack, message, RichReply(content))
+    else:
+        sent = await app.reply(slack, message, content)
+    assert len(requests) == 1
+    payload = requests[0]
+    assert payload['channel'] == 'C123' and payload.get('thread_ts') == thread
+    assert payload['text'] == content
+    assert payload['unfurl_links'] is False and payload['unfurl_media'] is False
+    assert len(payload['blocks']) > 1
+    assert all(block['expand'] is True for block in payload['blocks'])
+    # Bare names must not gain automatic mention parsing when moving into blocks.
+    assert all(block['text']['verbatim'] is True for block in payload['blocks'])
+    assert all(len(block['text']['text']) <= 3000 for block in payload['blocks'])
+    assert ''.join(block['text']['text'] for block in payload['blocks']) == content
+    assert sent.text == content
+    assert await app.state.history(message.conversation_id) == (sent,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rich', [False, True])
+async def test_oversized_replies_fail_before_posting_or_recording_history(rich):
+    client = FakeSlackClient()
+    slack = Slack(bot_token='test-only', app_token='test-only', web_client=client)
+    app = AgentChat(channels=[slack])
+    message = destination()
+    content = 'a' * 150001
+    with pytest.raises(ValueError, match='at most 50'):
+        if rich:
+            await app.reply_rich(slack, message, RichReply(content))
+        else:
+            await app.reply(slack, message, content)
+    assert client.posts == []
+    assert await app.state.history(message.conversation_id) == ()

@@ -147,6 +147,9 @@ def test_slack_dm_round_trip_preserves_one_conversation() -> None:
             {
                 "channel": "dm-1",
                 "text": "I remember 1 messages",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "I remember 1 messages", "verbatim": True,
+                }}],
                 "thread_ts": None,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -154,6 +157,9 @@ def test_slack_dm_round_trip_preserves_one_conversation() -> None:
             {
                 "channel": "dm-1",
                 "text": "I remember 3 messages",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "I remember 3 messages", "verbatim": True,
+                }}],
                 "thread_ts": None,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -194,6 +200,9 @@ def test_slack_mention_replies_in_thread_and_deduplicates() -> None:
             {
                 "channel": "channel-1",
                 "text": "hello",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "hello", "verbatim": True,
+                }}],
                 "thread_ts": "1.0",
                 "unfurl_links": False,
                 "unfurl_media": False,
