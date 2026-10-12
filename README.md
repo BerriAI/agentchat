@@ -6,21 +6,13 @@ use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents
 
 ## Quickstart
 
-Use the OpenAI Agents SDK with Slack.
-
-Clone this repository, use Python 3.11+, and install AgentChat in your virtual
-environment:
-
+### 1. Install
 ```sh
 git clone https://github.com/BerriAI/agentchat.git
 cd agentchat
 python -m pip install -e ".[openai]"
 ```
-
-[Configure your Slack app](docs/slack.md#slack-setup), then
-set `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, and `OPENAI_API_KEY`. Set
-`OPENAI_MODEL` to a model available to your account.
-
+### 2. Usage
 Save this as `bot.py`:
 
 ```python
@@ -31,23 +23,17 @@ from agents import Agent, Runner, SQLiteSession
 
 from agentchat import AgentChat, MessageContext
 from agentchat.channels.slack import Slack
-# from agentchat.channels.teams import Teams
-# from agentchat.channels.imessage import IMessage
-# from agentchat.channels.whatsapp import WhatsApp
-# from agentchat.channels.discord import Discord
+# from agentchat.channels.teams import Teams # from agentchat.channels.imessage import IMessage, # from agentchat.channels.whatsapp import WhatsApp, # from agentchat.channels.discord import Discord
+
 
 slack = Slack.from_env(ack_emoji=None)
 app = AgentChat(channels=[
     slack,
     # Teams.from_env(),
-    # IMessage.from_env(),
-    # WhatsApp.from_env(),
-    # Discord.from_env(),
 ])
 
 agent = Agent(name="Assistant", model=os.environ["OPENAI_MODEL"])
 sessions = {}
-
 
 @app.on_message
 async def respond(context: MessageContext) -> str:
@@ -73,19 +59,6 @@ async def main():
 asyncio.run(main())
 ```
 
-Run `python bot.py`, then DM the Slack bot or mention it in a channel thread.
-AgentChat routes the returned answer to the same conversation. The SDK's session
-retains the conversation between messages.
-[OpenAI sessions documentation](https://developers.openai.com/api/docs/guides/agents/running-agents)
-
-To enable another channel, install its extra and configure its credentials
-before uncommenting its import and channel entry. See
-[supported channels](#supported-channels) for setup guides.
-
-To receive subsequent channel-thread replies without another mention, add
-`await slack.subscribe(context.message)` inside your handler after checking the
-sender's access. For shared threads, retain speaker identity in your agent's
-input formatting. Conversation membership does not grant tool permissions.
 
 ## Other agent SDKs
 
