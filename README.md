@@ -4,6 +4,8 @@ a minimal sdk to connect your agents to slack, teams, imessage, whatsapp.
 
 use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents) and instantly connect it to all supported channels.
 
+<img width="3840" height="2160" alt="agentchat-cinematic-4k" src="https://github.com/user-attachments/assets/bccdba03-80e6-4c11-83c5-d150d1263189" />
+
 ## Quickstart
 
 ### 1. Install
