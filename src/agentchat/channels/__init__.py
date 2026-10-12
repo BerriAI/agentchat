@@ -8,10 +8,25 @@ if TYPE_CHECKING:
     from agentchat.channels.imessage import IMessage
     from agentchat.channels.slack import Slack, SlackUser
     from agentchat.channels.teams import Teams
+    from agentchat.channels.whatsapp import WhatsApp
 
-__all__ = ["Channel", "Discord", "IMessage", "Slack", "SlackUser", "Teams", "ThreadHistoryChannel"]
+__all__ = [
+    "Channel",
+    "Discord",
+    "IMessage",
+    "Slack",
+    "SlackUser",
+    "Teams",
+    "ThreadHistoryChannel",
+    "WhatsApp",
+]
 
-_PROVIDERS = {"Discord": "discord", "Teams": "teams", "IMessage": "imessage"}
+_PROVIDERS = {
+    "Discord": "discord",
+    "Teams": "teams",
+    "IMessage": "imessage",
+    "WhatsApp": "whatsapp",
+}
 
 
 def __getattr__(name: str) -> object:

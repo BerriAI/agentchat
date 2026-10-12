@@ -24,6 +24,7 @@ teams = [
     "microsoft-agents-authentication-msal>=1.8,<2",
 ]
 imessage = ["python-socketio[asyncio-client]>=5.13,<6"]
+whatsapp = []  # Uses the existing aiohttp dependency.
 dev = [
     "openai-agents>=0.4,<1",
     "discord.py>=2.6,<3",
