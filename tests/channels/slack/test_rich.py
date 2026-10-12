@@ -1,15 +1,15 @@
 from dataclasses import replace
 
 import pytest
-from test_mirroring import source
-from test_slack import FakeSlackClient
 
 from agentchat import AgentChat, RichReply, UploadFile
-from agentchat.channels import Slack, slack_media
+from agentchat.channels.slack import Slack
+from agentchat.channels.slack import files as slack_files
+from tests.support.slack import FakeSlackClient, slack_source
 
 
 def destination(thread: str | None = '1.0'):
-    message = source(thread)
+    message = slack_source(thread)
     return replace(message, metadata={**message.metadata, 'channel_id': 'C123'})
 
 
@@ -33,7 +33,7 @@ async def test_native_slack_upload_and_rich_reply_share_saved_routing(monkeypatc
     async def upload(url: str, raw: bytes) -> None:
         uploaded.append((url, raw))
 
-    monkeypatch.setattr(slack_media, 'upload_bytes', upload)
+    monkeypatch.setattr(slack_files, 'upload_bytes', upload)
     client = Client()
     slack = Slack(bot_token='test', app_token='test', web_client=client, workspace_id='T')
     app = AgentChat(channels=[slack])
@@ -97,7 +97,7 @@ async def test_native_upload_exercises_real_slack_client_request_builder(monkeyp
         assert url == 'https://files.slack.com/upload/F1' and raw == b'video'
 
     monkeypatch.setattr(slack._web_client, '_send', send)
-    monkeypatch.setattr(slack_media, 'upload_bytes', upload)
+    monkeypatch.setattr(slack_files, 'upload_bytes', upload)
     assert slack._web_client.retry_handlers == []
     files = await slack.upload_files(destination(), [UploadFile('demo.webm', b'video')])
     assert [file.id for file in files] == ['F1'] and len(calls) == 2

@@ -3,8 +3,8 @@ import asyncio
 from agents import Agent, Runner
 
 from agentchat import AgentChat, MessageContext
-from agentchat.channels import Slack
-from agentchat.integrations import should_reply, to_openai_input
+from agentchat.channels.slack import Slack
+from agentchat.integrations.openai_agents import should_reply, to_openai_input
 from agentchat.state import MemoryState
 
 agent = Agent(

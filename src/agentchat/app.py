@@ -12,11 +12,11 @@ from agentchat.channels.base import (
     RichReplyChannel,
     StatusChannel,
 )
+from agentchat.context import MessageContext
 from agentchat.models import (
     Attachment,
     DownloadedFile,
     Message,
-    MessageContext,
     RichReply,
     UploadedFile,
     UploadFile,

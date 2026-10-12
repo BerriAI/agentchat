@@ -2,11 +2,12 @@ import asyncio
 from dataclasses import replace
 
 import pytest
-from test_app import FakeChannel
-from test_slack import FakeSlackClient, channel_event
 
 from agentchat import AgentChat, Attachment, DownloadedFile, Message, Sender
-from agentchat.channels import Slack, slack_files
+from agentchat.channels.slack import Slack, events
+from agentchat.channels.slack import files as slack_files
+from tests.support.channels import FakeChannel
+from tests.support.slack import FakeSlackClient, channel_event
 
 
 def transport(monkeypatch, *, chunks=(b"image",), status=200):
@@ -53,11 +54,11 @@ def metadata(**overrides):
 
 def test_parser_keeps_only_bounded_unique_file_references():
     files = [metadata(), metadata(), {"id": "../token"}, {"id": "F2"}, {"id": "F3"}]
-    result = slack_files.slack_attachments(files, limit=4)
+    result = events.slack_attachments(files, limit=4)
     assert result == (Attachment("F12345678", "image.png", "image/png", 5), Attachment("F2"))
     assert "url_private" not in repr(result)
-    assert slack_files.slack_attachments(None) == ()
-    assert slack_files.slack_attachments([None, {"id": 4}]) == ()
+    assert events.slack_attachments(None) == ()
+    assert events.slack_attachments([None, {"id": 4}]) == ()
 
 
 @pytest.mark.asyncio

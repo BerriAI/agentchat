@@ -1,7 +1,7 @@
 import pytest
 
 from agentchat import Message, Sender
-from agentchat.channels import Slack
+from agentchat.channels.slack import Slack
 
 
 def source(ts="9.0", team="T123"):

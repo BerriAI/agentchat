@@ -1,19 +1,12 @@
 from dataclasses import replace
 
 import pytest
-from test_app import FakeChannel
-from test_slack import FakeSlackClient
 
 from agentchat import AgentChat, Message, Sender
-from agentchat.channels import Slack
-from agentchat.channels.slack_mirror import mirror_payload
-
-
-def source(thread='1.0'):
-    return Message(id='slack:event', conversation_id='slack:T:C:1.0', channel='slack',
-                   sender=Sender('U'), text='Start', role='user', thread_id=thread,
-                   metadata={'team_id': 'T', 'channel_id': 'C',
-                             'reply_thread_timestamp': thread, 'message_timestamp': '9.0'})
+from agentchat.channels.slack import Slack
+from agentchat.channels.slack.mirroring import mirror_payload
+from tests.support.channels import FakeChannel
+from tests.support.slack import FakeSlackClient, slack_source
 
 
 def external(text='Continue with <!channel> and <@U> & code'):
@@ -34,7 +27,7 @@ async def test_mirror_routes_to_saved_source_preserves_user_and_never_invokes_ag
         raise AssertionError('Mirroring must not execute another turn')
 
     message = external()
-    sent = await app.mirror(slack, source(thread), message, origin='Moyai web')
+    sent = await app.mirror(slack, slack_source(thread), message, origin='Moyai web')
     post = client.posts[0]
     assert post['channel'] == 'C' and post['thread_ts'] == thread
     assert post['blocks'][0]['elements'][0]['text'] == 'Alice · via Moyai web'
@@ -45,8 +38,8 @@ async def test_mirror_routes_to_saved_source_preserves_user_and_never_invokes_ag
     assert not post['mrkdwn'] and not post['link_names'] and not post['unfurl_links']
     assert post['parse'] == 'none'
     assert sent.role == 'user' and sent.sender == message.sender and sent.text == message.text
-    assert sent.conversation_id == source().conversation_id
-    assert await app.state.history(source().conversation_id) == (sent,)
+    assert sent.conversation_id == slack_source().conversation_id
+    assert await app.state.history(slack_source().conversation_id) == (sent,)
     await slack.handle_event({'team_id': 'T', 'event_id': 'echo', 'event': {
         'type': 'message', 'channel_type': 'im', 'channel': 'C', 'user': 'BOT',
         'bot_id': 'B', 'ts': '2.0', **post,
@@ -71,7 +64,7 @@ async def test_native_history_restores_mirror_role_after_restart_but_rejects_spo
 
     slack = Slack(bot_token='test', app_token='test', web_client=Client(),
                   workspace_id='T', bot_user_id='BOT')
-    history = await slack.thread_history(source())
+    history = await slack.thread_history(slack_source())
     assert history[1].sender == message.sender
     assert history[1].role == 'user' and history[1].text == message.text
     assert history[2].sender.id == 'SPOOFER' and history[2].text != message.text
@@ -83,14 +76,14 @@ async def test_rejects_invalid_mirror_without_posting_and_preserves_existing_cha
     channel = FakeChannel()
     app = AgentChat(channels=[channel])
     with pytest.raises(TypeError, match='does not support'):
-        await app.mirror(channel, source(), external())
+        await app.mirror(channel, slack_source(), external())
     client = FakeSlackClient()
     slack = Slack(bot_token='test', app_token='test', web_client=client, workspace_id='T')
     for message in (replace(external(), role='assistant'), external('x' * 2801)):
         with pytest.raises(ValueError):
-            await slack.mirror(source(), message)
+            await slack.mirror(slack_source(), message)
     with pytest.raises(ValueError, match='workspace'):
-        await slack.mirror(replace(source(), metadata={'team_id': 'OTHER'}), external())
+        await slack.mirror(replace(slack_source(), metadata={'team_id': 'OTHER'}), external())
     assert client.posts == []
 
 
@@ -105,6 +98,6 @@ async def test_ambiguous_delivery_is_propagated_without_retry_or_history_append(
     slack = Slack(bot_token='test', app_token='test', web_client=client)
     app = AgentChat(channels=[slack])
     with pytest.raises(TimeoutError):
-        await app.mirror(slack, source(), external())
+        await app.mirror(slack, slack_source(), external())
     assert len(client.posts) == 1
-    assert not await app.state.history(source().conversation_id)
+    assert not await app.state.history(slack_source().conversation_id)

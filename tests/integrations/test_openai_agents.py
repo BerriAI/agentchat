@@ -9,9 +9,10 @@ from agents.usage import Usage
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from agentchat import AgentChat, Message, Sender
-from agentchat.channels import Slack
-from agentchat.integrations import should_reply, to_openai_input
+from agentchat.channels.slack import Slack
+from agentchat.integrations.openai_agents import should_reply, to_openai_input
 from agentchat.state import MemoryState
+from tests.support.slack import FakeSlackClient
 
 
 class StaticModel(Model):
@@ -42,15 +43,6 @@ class StaticModel(Model):
 
     def stream_response(self, *args, **kwargs):
         raise NotImplementedError
-
-
-class FakeSlackClient:
-    def __init__(self) -> None:
-        self.posts: list[dict[str, object]] = []
-
-    async def chat_postMessage(self, **kwargs):
-        self.posts.append(kwargs)
-        return {"ok": True, "ts": str(len(self.posts))}
 
 
 def test_openai_agent_round_trip_keeps_slack_conversation_history() -> None:

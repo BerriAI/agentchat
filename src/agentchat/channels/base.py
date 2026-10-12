@@ -16,6 +16,14 @@ MessageReceiver = Callable[["Channel", Message], Awaitable[None]]
 
 
 class Channel(Protocol):
+    """Messaging adapter consumed by AgentChat; no inheritance is required.
+
+    Bind a receiver before running, emit normalized messages with stable IDs,
+    and return confirmed replies in the source conversation. Transport failures
+    propagate to the caller. The adapter owns connection resources and cleanup;
+    AgentChat owns deduplication, conversation ordering, and local history.
+    """
+
     name: str
 
     def bind(self, receiver: MessageReceiver) -> None: ...
