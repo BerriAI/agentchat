@@ -1,14 +1,20 @@
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 from agentchat.channels.base import Channel, ThreadHistoryChannel
 
 if TYPE_CHECKING:
+    from agentchat.channels.discord import Discord
     from agentchat.channels.slack import Slack, SlackUser
 
-__all__ = ["Channel", "Slack", "SlackUser", "ThreadHistoryChannel"]
+__all__ = ["Channel", "Discord", "Slack", "SlackUser", "ThreadHistoryChannel"]
+
+_PROVIDERS = {"Discord": "discord"}
 
 
 def __getattr__(name: str) -> object:
+    if name in _PROVIDERS:
+        return getattr(import_module(f"agentchat.channels.{_PROVIDERS[name]}"), name)
     if name in {"Slack", "SlackUser"}:
         try:
             from agentchat.channels import slack
