@@ -404,11 +404,84 @@ With direct binding, the application owns deduplication and request ordering.
 
 `Slack.run()` checks the bot identity. Pass `workspace_id=` to reject a token or
 event from another workspace. `await slack.is_connected()` exposes socket readiness.
-Socket envelopes are acknowledged before processing in tracked background tasks.
+The default Socket Mode source acknowledges envelopes before processing in tracked background tasks.
 `max_pending_events` defaults to 64; excess envelopes are left unacknowledged for
 Slack's retry policy. `await slack.close()` closes the socket, then drains tasks
 for up to 20 seconds before cancelling unfinished work. This is bounded in-process
 delivery, not a durable queue; applications performing writes need their own journal.
+
+## Composing event sources
+
+`Slack` combines a replaceable incoming event source with shared Slack message
+behavior. Existing Socket Mode setup remains:
+
+```python
+slack = Slack(bot_token="xoxb-...", app_token="xapp-...")
+# Equivalent environment-based convenience:
+slack = Slack.from_env()
+```
+
+For a host-owned verified webhook queue or another Slack event feed, supply a
+`SlackEventSource` instead. No app token or Socket Mode connection is needed:
+
+```python
+import os
+
+from agentchat import AgentChat, MessageContext
+from agentchat.channels.slack import Slack, SlackEventSource
+
+
+async def serve(source: SlackEventSource) -> None:
+    slack = Slack(
+        bot_token=os.environ["SLACK_BOT_TOKEN"],
+        event_source=source,
+        ack_emoji=None,
+    )
+    app = AgentChat(channels=[slack])
+
+    @app.on_message
+    async def respond(context: MessageContext) -> str:
+        # The application authorizes the sender before running agent tools.
+        return context.message.text or "Received your attachment."
+
+    try:
+        await app.run()
+    finally:
+        await app.close()
+```
+
+Your source implements these operations structurally; no inheritance is required:
+
+- `async run(receiver)`: deliver already authenticated Slack Events API payloads
+  through `await receiver(payload)` for the source's lifetime.
+- `async close()`: stop intake and release resources, draining or cancelling
+  in-flight work according to the source's documented policy; repeated close calls
+  must be safe.
+- `async is_connected() -> bool`: report that source's readiness.
+
+The receiver takes the same mapping accepted by `slack.handle_event`, including
+`team_id` and `event`. Slack verifies bot identity and the configured workspace
+before starting the source. Subscriptions, parsing, files, history and replies
+are unchanged across sources, and AgentChat continues to own deduplication and
+conversation ordering. Outgoing Slack API calls are independently injectable
+through `web_client=`. `max_pending_events` configures the default Socket Mode
+source; a custom source owns its own concurrency and queue limits.
+
+Supply exactly one of `app_token` and `event_source`. A bare `Slack(bot_token=...)`
+without a source is rejected. For an existing host that binds directly to the
+channel, supply its source and let `Slack.run()` authenticate before delivering
+events through it.
+
+The source owns HTTP signature/timestamp verification and transport acknowledgements.
+`handle_event` accepts decoded events; it is not an HTTP signature verifier. Hosts
+using durable queues must define when events are acknowledged and how uncertain
+outcomes are recovered. The included Socket Mode source remains bounded,
+in-process delivery. It owns socket acknowledgements, connection state, pending
+event limits and shutdown independently of Slack's message behavior.
+
+See [the source protocol](../src/agentchat/channels/slack/transport.py) and
+[the injected-source tests](../tests/channels/slack/test_event_source.py) for a
+concrete queue-source composition that reuses the same adapter.
 
 ## Development
 
