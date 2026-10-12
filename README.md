@@ -97,8 +97,8 @@ Keep the quickstart's `asyncio`/`os` and AgentChat imports, Slack setup, and
 `main()` function. Replace the OpenAI import, agent/session setup, and handler
 with one example below, before the startup call.
 
-All examples send only the new message and let the SDK manage conversation
-state. They are text-chat examples with no approval UI or custom tools.
+Use `context.conversation.id` to keep SDK state separate for each chat. These
+examples handle text replies; add a tool approval flow if your agent needs one.
 
 ### Claude Agent SDK
 
@@ -236,13 +236,13 @@ to its server thread. Adjust the response extraction if your graph returns a
 different state schema or content blocks.
 
 These examples keep their session mappings, histories, and checkpoints in
-memory. For restart continuity, persist them with your application's store and
-the SDK's persistence support. Claude also needs its underlying session data;
+memory. To resume after a restart, persist this state using your application's
+store and the SDK's persistence support. Claude also needs its underlying session data;
 LangGraph SDK needs the mapping to its server threads.
 
 ## MessageContext reference
 
-Every `@app.on_message` handler receives a `MessageContext`:
+Your `@app.on_message` handler receives a `MessageContext`:
 
 ```python
 from agentchat import MessageContext
@@ -253,9 +253,8 @@ async def respond(context: MessageContext) -> str | None:
     return f"You said: {context.message.text}"
 ```
 
-Returning a string posts a reply. To send messages explicitly, use
-`await context.reply(...)` and return `None`; returning the same answer as well
-would send it twice.
+Return a string to send a reply. If you call `await context.reply(...)`, return
+`None` to avoid sending the answer twice.
 
 ### Context fields
 
@@ -327,8 +326,7 @@ presentation state and do not add messages to conversation history.
 
 ### File and rich-message types
 
-These types are exported from `agentchat`. Their fields are shown below;
-`None` and empty tuples are the defaults for optional fields.
+Import these types from `agentchat`. Optional fields default to `None` or empty tuples.
 
 ```python
 from agentchat import (
