@@ -23,11 +23,13 @@ teams = [
     "microsoft-agents-hosting-aiohttp>=1.8,<2",
     "microsoft-agents-authentication-msal>=1.8,<2",
 ]
+imessage = ["python-socketio[asyncio-client]>=5.13,<6"]
 dev = [
     "openai-agents>=0.4,<1",
     "discord.py>=2.6,<3",
     "microsoft-agents-hosting-aiohttp>=1.8,<2",
     "microsoft-agents-authentication-msal>=1.8,<2",
+    "python-socketio[asyncio-client]>=5.13,<6",
     "pytest>=7.3,<9",
     "pytest-asyncio>=0.21,<1",
     "ruff>=0.14,<1",

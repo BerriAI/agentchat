@@ -5,12 +5,13 @@ from agentchat.channels.base import Channel, ThreadHistoryChannel
 
 if TYPE_CHECKING:
     from agentchat.channels.discord import Discord
+    from agentchat.channels.imessage import IMessage
     from agentchat.channels.slack import Slack, SlackUser
     from agentchat.channels.teams import Teams
 
-__all__ = ["Channel", "Discord", "Slack", "SlackUser", "Teams", "ThreadHistoryChannel"]
+__all__ = ["Channel", "Discord", "IMessage", "Slack", "SlackUser", "Teams", "ThreadHistoryChannel"]
 
-_PROVIDERS = {"Discord": "discord", "Teams": "teams"}
+_PROVIDERS = {"Discord": "discord", "Teams": "teams", "IMessage": "imessage"}
 
 
 def __getattr__(name: str) -> object:
