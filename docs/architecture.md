@@ -77,6 +77,13 @@ channels/
 Every Slack-specific module lives below `slack/`. There are no sibling Slack
 compatibility modules or provider aliases in the shared namespace.
 
+Discord, Teams, iMessage, and WhatsApp use the same package boundary with
+`adapter.py`, normalization in `events.py`, and text validation in `rendering.py`.
+Discord and BlueBubbles have small REST transport modules too. The provider-neutral
+private helper `agentchat/_delivery.py` shares bounded background dispatch and
+cleanup. Provider authentication, acknowledgement, and overflow policy stay in
+each adapter. See the [provider guides](providers.md) for supported operations.
+
 ## Composition
 
 The generic adapter boundary remains `Channel`. Within Slack, replace event
@@ -141,3 +148,6 @@ Root-level message and context imports are unchanged. Importing the core does
 not import Slack, aiohttp or OpenAI Agents. Installation defaults are unchanged:
 Slack dependencies remain installed with the base package, while OpenAI Agents
 still uses the `openai` extra.
+
+Discord, Teams, and iMessage use separate optional extras. WhatsApp uses aiohttp
+from the base install. Requesting one provider does not import the others.
