@@ -1,10 +1,8 @@
 # agentchat
 
-Connect chat platforms to any Python agent. AgentChat handles message delivery,
-conversation history, deduplication, and replies; your application owns the agent.
+a minimal sdk to connect your agents to slack, teams, imessage, whatsapp. 
 
-Slack is currently implemented. Each messaging platform lives in its own channel
-adapter, so adding another platform does not require changing the message loop.
+install it, use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents) and instantly connect it to all supported channels.  
 
 ## Quickstart
 
