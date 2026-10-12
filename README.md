@@ -19,7 +19,7 @@ Save this as `bot.py`:
 import asyncio
 import os
 
-from agents import Agent, Runner, SQLiteSession
+from agents import Agent, Runner, SQLiteSession # import `Agent` from OpenAI Agents SDK
 
 from agentchat import AgentChat, MessageContext
 from agentchat.channels.slack import Slack
