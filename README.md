@@ -23,17 +23,12 @@ from agents import Agent, Runner, SQLiteSession
 
 from agentchat import AgentChat, MessageContext
 from agentchat.channels.slack import Slack
-# from agentchat.channels.teams import Teams # from agentchat.channels.imessage import IMessage, # from agentchat.channels.whatsapp import WhatsApp, # from agentchat.channels.discord import Discord
 
-
-slack = Slack.from_env(ack_emoji=None)
-app = AgentChat(channels=[
-    slack,
-    # Teams.from_env(),
-])
+app = AgentChat(channels=[Slack.from_env(ack_emoji=None)])
 
 agent = Agent(name="Assistant", model=os.environ["OPENAI_MODEL"])
 sessions = {}
+
 
 @app.on_message
 async def respond(context: MessageContext) -> str:
