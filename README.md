@@ -74,7 +74,9 @@ history and ordering can [bind directly to the channel](docs/slack.md#using-an-e
 
 The [Slack guide](docs/slack.md) covers setup, working indicators, user profiles,
 thread history, incoming attachments, rich replies, uploads, and mirrored inputs.
-Existing `from agentchat.channels import Slack` imports remain supported.
+Import each provider from its own package: `from agentchat.channels.slack import Slack`.
+Slack can also [use an application-owned event source](docs/slack.md#composing-event-sources)
+without an app token or Socket Mode connection.
 
 ## Development
 
@@ -87,3 +89,4 @@ python -m pytest
 Provider behavior tests live under `tests/channels/`, framework tests under
 `tests/integrations/`, and shared adapter contracts under `tests/contracts/`.
 Shared fakes and event builders live in `tests/support/`.
+CI runs lint and the full suite, including the channel-folder containment rule.
