@@ -1,3 +1,4 @@
+"""Slack channel facade with Socket Mode lifecycle and native capabilities."""
 from __future__ import annotations
 
 import asyncio
@@ -16,14 +17,14 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
-from agentchat.channels.slack_files import download_slack_file, slack_attachments
-from agentchat.channels.slack_media import (
-    rich_payload,
-    text_blocks,
+from agentchat.channels.slack.events import slack_attachments, to_message
+from agentchat.channels.slack.files import (
+    download_slack_file,
     upload_slack_files,
     validate_destination,
 )
-from agentchat.channels.slack_mirror import mirror_payload, read_mirror
+from agentchat.channels.slack.mirroring import mirror_payload, read_mirror
+from agentchat.channels.slack.rendering import rich_payload, text_blocks
 from agentchat.models import (
     Attachment,
     DownloadedFile,
@@ -281,7 +282,10 @@ class Slack:
         if not isinstance(event_value, Mapping):
             return
         event = cast(Mapping[str, object], event_value)
-        message = self._to_message(payload, event)
+        message = to_message(
+            payload, event, bot_user_id=self._bot_user_id,
+            workspace_id=self._workspace_id, channel_name=self.name,
+        )
         if message is not None:
             if message.metadata["requires_subscription"] and not await self._threads.contains(
                 message.conversation_id
@@ -455,89 +459,3 @@ class Slack:
         self._tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
             logger.warning("Slack handler failed (%s)", type(error).__name__)
-
-    def _to_message(
-        self,
-        payload: Mapping[str, object],
-        event: Mapping[str, object],
-    ) -> Message | None:
-        event_type = event.get("type")
-        is_direct_message = event_type == "message" and event.get("channel_type") == "im"
-        if (event.get("bot_id") is not None or event.get("bot_profile") is not None
-                or event.get("subtype") not in (None, "file_share")):
-            return None
-        user_id = event.get("user")
-        channel_id = event.get("channel")
-        timestamp = event.get("ts")
-        text = event.get("text", "")
-        attachments = slack_attachments(event.get("files"))
-        if not isinstance(user_id, str) or not user_id or user_id == self._bot_user_id:
-            return None
-        if not isinstance(channel_id, str) or not channel_id:
-            return None
-        if not isinstance(timestamp, str) or not timestamp:
-            return None
-        if not isinstance(text, str) or (not text.strip() and not attachments):
-            return None
-        team_id = payload.get("team_id")
-        if not isinstance(team_id, str) or not team_id:
-            return None
-        if self._workspace_id is not None and team_id != self._workspace_id:
-            return None
-        thread_timestamp_value = event.get("thread_ts")
-        if thread_timestamp_value is not None and (
-            not isinstance(thread_timestamp_value, str) or not thread_timestamp_value
-        ):
-            return None
-        thread_timestamp = (
-            thread_timestamp_value if isinstance(thread_timestamp_value, str) else timestamp
-        )
-        bot_mention = f"<@{self._bot_user_id}>" if self._bot_user_id else None
-        is_channel_message = event_type == "message" and event.get("channel_type") in (
-            "channel",
-            "group",
-        )
-        is_mention = event_type == "app_mention" or (
-            is_channel_message and bot_mention is not None and bot_mention in text
-        )
-        is_thread_reply = is_channel_message and thread_timestamp_value is not None
-        if not (is_direct_message or is_mention or is_thread_reply):
-            return None
-        conversation_id = (
-            f"slack:{team_id}:{channel_id}"
-            if is_direct_message
-            else f"slack:{team_id}:{channel_id}:{thread_timestamp}"
-        )
-        event_id_value = payload.get("event_id")
-        event_id = (
-            event_id_value if isinstance(event_id_value, str) else f"{channel_id}:{timestamp}"
-        )
-        normalized_text = text.replace(bot_mention, "").strip() if bot_mention else text.strip()
-        if not normalized_text and not attachments:
-            return None
-        return Message(
-            id=f"slack:{team_id}:{channel_id}:{timestamp}",
-            conversation_id=conversation_id,
-            channel=self.name,
-            sender=Sender(id=user_id),
-            text=normalized_text,
-            role="user",
-            thread_id=thread_timestamp_value if is_direct_message else thread_timestamp,
-            addressed=is_direct_message or is_mention,
-            attachments=attachments,
-            metadata=MappingProxyType(
-                {
-                    "channel_id": channel_id,
-                    "team_id": team_id,
-                    "event_id": event_id,
-                    "channel_type": "im"
-                    if is_direct_message
-                    else event.get("channel_type", "channel"),
-                    "reply_thread_timestamp": thread_timestamp_value
-                    if is_direct_message
-                    else thread_timestamp,
-                    "message_timestamp": timestamp,
-                    "requires_subscription": not is_direct_message and not is_mention,
-                }
-            ),
-        )

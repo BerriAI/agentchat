@@ -2,7 +2,6 @@ from collections.abc import Sequence
 from dataclasses import FrozenInstanceError
 
 import pytest
-from test_app import FakeChannel, incoming
 
 from agentchat import (
     AgentChat,
@@ -13,6 +12,7 @@ from agentchat import (
     UploadedFile,
     UploadFile,
 )
+from tests.support.channels import FakeChannel, incoming
 
 
 class RichChannel(FakeChannel):
