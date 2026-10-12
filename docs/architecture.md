@@ -74,6 +74,14 @@ Keep new provider implementations in their own packages. Add internal files when
 their responsibilities justify it; a small provider can start with `adapter.py`.
 See [adding a channel](adding-a-channel.md) for the extension contract.
 
+Discord, Teams, iMessage, and WhatsApp follow this package boundary with
+`adapter.py`, pure normalization in `events.py`, and text validation in
+`rendering.py`. Discord and BlueBubbles have small REST transport modules too.
+`channels/_delivery.py` shares bounded background dispatch and cleanup among
+these adapters. It is a private composition helper, not a channel superclass;
+provider authentication, acknowledgement, and overflow policy stay in each adapter.
+The [provider guides](providers.md) describe their supported operations and limits.
+
 ## Public imports and compatibility
 
 Both `from agentchat.channels import Slack` and
@@ -85,6 +93,8 @@ The `channels` and `integrations` namespaces load concrete implementations only
 when requested. Importing the core does not import Slack, aiohttp or OpenAI Agents.
 Installation defaults are unchanged: Slack dependencies remain installed with the
 base package, while OpenAI Agents still uses the `openai` extra.
+Discord, Teams, and iMessage use separate optional extras. WhatsApp uses aiohttp
+from the base install. Requesting one provider does not import the other providers.
 
 The documented legacy helper modules forward to canonical implementations:
 

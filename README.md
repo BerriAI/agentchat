@@ -3,8 +3,21 @@
 Connect chat platforms to any Python agent. AgentChat handles message delivery,
 conversation history, deduplication, and replies; your application owns the agent.
 
-Slack is currently implemented. Each messaging platform lives in its own channel
-adapter, so adding another platform does not require changing the message loop.
+Slack, Discord, Microsoft Teams, iMessage through BlueBubbles, and WhatsApp Business
+Cloud API have channel adapters. Each provider lives in its own package and uses
+the same message loop.
+
+| Connect | Setup and echo example |
+| --- | --- |
+| Slack | [Slack guide](docs/slack.md) · [echo](examples/slack_echo.py) |
+| Discord | [Discord guide](docs/discord.md) · [echo](examples/discord_echo.py) |
+| Microsoft Teams | [Teams guide](docs/teams.md) · [echo](examples/teams_echo.py) |
+| iMessage | [BlueBubbles guide](docs/imessage.md) · [echo](examples/imessage_echo.py) |
+| WhatsApp | [Cloud API guide](docs/whatsapp.md) · [echo](examples/whatsapp_echo.py) |
+
+The four new adapters support receiving messages and confirmed text replies.
+See [shared usage, capabilities, and delivery limits](docs/providers.md) for
+multiple providers or an existing agent runner.
 
 ## Quickstart
 

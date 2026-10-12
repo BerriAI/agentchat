@@ -76,6 +76,13 @@ deduplication and failure propagation. Add a harness fixture for your provider i
 assertions against it. Each harness adapts native event injection and outbound
 transport inspection; the contract tests remain provider-independent.
 
+The new gateway/HTTP adapters also run the parametrized suite in
+[`test_providers.py`](../tests/contracts/test_providers.py), covering receipts,
+dispatch/deduplication, absent capabilities, queue limits, and real lifecycle
+cleanup. Its fixtures use helpers from `tests/support/<provider>.py`. Add a new
+provider there when using the bounded background-dispatch helper; its errors
+are logged asynchronously instead of escaping the event callback.
+
 Also cover provider-specific workspace checks, DM/thread routing, subscription
 rules, malformed events, pagination, socket acknowledgement, queue limits and
 shutdown where applicable. Capability tests should exercise unsupported features,
