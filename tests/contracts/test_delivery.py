@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agentchat.channels._delivery import DeliveryTasks
+from agentchat._delivery import DeliveryTasks
 from tests.support.channels import FakeChannel, incoming
 
 

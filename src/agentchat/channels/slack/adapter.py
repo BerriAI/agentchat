@@ -1,19 +1,14 @@
-"""Slack channel facade with Socket Mode lifecycle and native capabilities."""
+"""Slack channel behavior composed with a replaceable event source."""
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from slack_sdk.socket_mode.aiohttp import SocketModeClient
-from slack_sdk.socket_mode.async_client import AsyncBaseSocketModeClient
-from slack_sdk.socket_mode.request import SocketModeRequest
-from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
@@ -25,6 +20,7 @@ from agentchat.channels.slack.files import (
 )
 from agentchat.channels.slack.mirroring import mirror_payload, read_mirror
 from agentchat.channels.slack.rendering import rich_payload, text_blocks
+from agentchat.channels.slack.transport import SlackEventSource
 from agentchat.models import (
     Attachment,
     DownloadedFile,
@@ -34,8 +30,6 @@ from agentchat.models import (
     UploadedFile,
     UploadFile,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +93,8 @@ class Slack:
         self,
         *,
         bot_token: str,
-        app_token: str,
+        app_token: str | None = None,
+        event_source: SlackEventSource | None = None,
         web_client: SlackWebClient | None = None,
         ack_emoji: str | None = "eyes",
         workspace_id: str | None = None,
@@ -107,23 +102,33 @@ class Slack:
         thread_subscriptions: ThreadSubscriptions | None = None,
         max_pending_events: int = 64,
     ) -> None:
+        if (app_token is None) == (event_source is None):
+            raise ValueError("Provide exactly one of app_token or event_source")
         if max_pending_events < 1:
             raise ValueError("max_pending_events must be positive")
         self._bot_token = bot_token
-        self._app_token = app_token
         self._web_client = cast(
             SlackWebClient,
             web_client or AsyncWebClient(token=bot_token, retry_handlers=[]),
         )
-        self._socket_client: SocketModeClient | None = None
+        if event_source is None:
+            from agentchat.channels.slack.socket_mode import SocketMode
+
+            event_source = SocketMode(
+                app_token=cast(str, app_token),
+                web_client=cast(AsyncWebClient, self._web_client),
+                max_pending_events=max_pending_events,
+            )
+        self._event_source = event_source
         self._receiver: MessageReceiver | None = None
-        self._closed = asyncio.Event()
+        self._run_started = False
+        self._auth_task: asyncio.Task[Mapping[str, object]] | None = None
+        self._auth_cancelled_for_close = False
+        self._close_task: asyncio.Task[None] | None = None
         self._ack_emoji = ack_emoji
         self._workspace_id = workspace_id
         self._bot_user_id = bot_user_id
         self._threads = thread_subscriptions or MemoryThreadSubscriptions()
-        self._max_pending_events = max_pending_events
-        self._tasks: set[asyncio.Task[None]] = set()
 
     @classmethod
     def from_env(cls, *, ack_emoji: str | None = "eyes") -> Slack:
@@ -139,44 +144,45 @@ class Slack:
     async def run(self) -> None:
         if self._receiver is None:
             raise RuntimeError("Slack channel is not bound to AgentChat")
-        identity = await self._web_client.auth_test()
-        workspace_id, bot_user_id = identity.get("team_id"), identity.get("user_id")
-        if not isinstance(workspace_id, str) or not isinstance(bot_user_id, str):
-            raise RuntimeError("Slack did not return a bot identity")
-        if self._workspace_id is not None and self._workspace_id != workspace_id:
-            raise RuntimeError("Slack token belongs to a different workspace")
-        self._workspace_id, self._bot_user_id = workspace_id, bot_user_id
-        self._socket_client = SocketModeClient(
-            app_token=self._app_token,
-            web_client=cast(AsyncWebClient, self._web_client),
-        )
-        listeners = cast(
-            list[
-                Callable[
-                    [AsyncBaseSocketModeClient, SocketModeRequest],
-                    Awaitable[None],
-                ]
-            ],
-            self._socket_client.socket_mode_request_listeners,
-        )
-        listeners.append(self._handle_socket_request)
-        connect = cast(Callable[[], Awaitable[None]], self._socket_client.connect)
-        await connect()
-        await self._closed.wait()
+        if self._run_started or self._close_task is not None:
+            raise RuntimeError("Slack channel has already been started or closed")
+        self._run_started = True
+        try:
+            self._auth_task = asyncio.create_task(self._web_client.auth_test())
+            try:
+                identity = await self._auth_task
+            except asyncio.CancelledError:
+                current_task = asyncio.current_task()
+                if not self._auth_cancelled_for_close or (
+                    current_task is not None and current_task.cancelling()
+                ):
+                    raise
+                return
+            workspace_id, bot_user_id = identity.get("team_id"), identity.get("user_id")
+            if not isinstance(workspace_id, str) or not isinstance(bot_user_id, str):
+                raise RuntimeError("Slack did not return a bot identity")
+            if self._workspace_id is not None and self._workspace_id != workspace_id:
+                raise RuntimeError("Slack token belongs to a different workspace")
+            self._workspace_id, self._bot_user_id = workspace_id, bot_user_id
+            if self._close_task is None:
+                await self._event_source.run(self.handle_event)
+        finally:
+            await self.close()
 
     async def close(self) -> None:
-        self._closed.set()
-        if self._socket_client is not None:
-            close = cast(Callable[[], Awaitable[None]], self._socket_client.close)
-            await close()
-        if self._tasks:
-            _, pending = await asyncio.wait(self._tasks, timeout=20)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
+        if self._auth_task is not None and not self._auth_task.done():
+            self._auth_cancelled_for_close = True
+            self._auth_task.cancel()
+            await asyncio.gather(self._auth_task, return_exceptions=True)
+        await self._event_source.close()
 
     async def is_connected(self) -> bool:
-        return self._socket_client is not None and await self._socket_client.is_connected()
+        return await self._event_source.is_connected()
 
     async def get_user(self, user_id: str) -> SlackUser:
         """Look up a profile on demand; email requires the users:read.email scope."""
@@ -442,20 +448,3 @@ class Slack:
                 "origin": origin,
             }),
         )
-
-    async def _handle_socket_request(
-        self, client: AsyncBaseSocketModeClient, request: SocketModeRequest
-    ) -> None:
-        if request.type != "events_api":
-            return
-        if self._closed.is_set() or len(self._tasks) >= self._max_pending_events:
-            return
-        await client.send_socket_mode_response(SocketModeResponse(envelope_id=request.envelope_id))
-        task = asyncio.create_task(self.handle_event(request.payload))
-        self._tasks.add(task)
-        task.add_done_callback(self._event_done)
-
-    def _event_done(self, task: asyncio.Task[None]) -> None:
-        self._tasks.discard(task)
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning("Slack handler failed (%s)", type(error).__name__)

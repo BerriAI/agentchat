@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import re
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
-import discord
+if TYPE_CHECKING:
+    import discord
 
 from agentchat.models import Attachment, Message, Sender
 
 
 def normalize(event: discord.Message, *, bot_id: int) -> Message | None:
+    import discord
+
     if event.author.bot or event.webhook_id or event.author.id == bot_id or event.is_system():
         return None
     direct = event.guild is None

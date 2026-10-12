@@ -5,6 +5,9 @@ A channel is an adapter for a messaging platform. Put its implementation in
 pass an instance to `AgentChat(channels=[...])`. No dispatcher changes or provider
 registration are required.
 
+CI enforces that `channels/` contains only `__init__.py`, `base.py`, and provider
+packages. Keep provider helpers inside their package; root-level shims fail the test.
+
 ## Required contract
 
 Implement the existing `Channel` protocol in `agentchat.channels.base`:
@@ -97,6 +100,26 @@ python -m pytest
 
 Finally add a runnable example and a provider setup guide. Keep the default
 package import free of the provider SDK. If adding dependencies or optional
-extras, test the installed package as well as the editable checkout. A new
-provider may add a convenience namespace export, but it should not change core
-runtime modules or another adapter.
+extras, test the installed package as well as the editable checkout. Provider exports belong in their own package, keeping `agentchat.channels`
+limited to shared contracts. Adding a provider should not change core runtime
+modules, the shared namespace or another adapter.
+
+
+## Compose transports when a provider needs them
+
+Keep the generic `Channel` contract focused on normalized messages. If one provider
+supports multiple ways to receive native events, inject its event source into the
+adapter and keep parsing/delivery shared. Slack demonstrates this with
+`SlackEventSource` in `channels/slack/transport.py` and the default `SocketMode`
+implementation in `channels/slack/socket_mode.py`.
+
+A source implements `run(receiver)`, `close()` and `is_connected()`. It owns
+transport resources and must stop intake and clean up when closed or cancelled.
+It supplies provider events to the adapter callback; it does not reimplement
+normalization, conversation state or agent execution. Authentication of an HTTP
+request and durable acknowledgement remain the host source's responsibility.
+
+The Slack source tests exercise the same adapter with an injected event queue,
+including duplicate messages, subscribed follow-ups and replies. This demonstrates
+composition without adding a provider registry or requiring every channel to
+adopt Slack's transport interface.

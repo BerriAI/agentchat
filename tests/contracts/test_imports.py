@@ -30,7 +30,11 @@ def test_core_and_namespaces_do_not_import_provider_or_framework_sdks():
 from agentchat import AgentChat, Message, MessageContext, Sender
 from agentchat.channels import Channel, ThreadHistoryChannel
 import agentchat.integrations
-from agentchat.channels.whatsapp import WhatsApp
+from agentchat.channels.discord.rendering import text_payload
+import agentchat.channels.discord.events
+import agentchat.channels.teams.events
+import agentchat.channels.imessage.events
+import agentchat.channels.whatsapp.events
 assert 'agentchat.channels.slack' not in sys.modules
 assert 'agentchat.integrations.openai_agents' not in sys.modules
 """
@@ -50,7 +54,7 @@ def test_optional_provider_has_actionable_import_error(provider, extra):
         BLOCK_IMPORTS
         + f"""
 try:
-    from agentchat.channels import {provider}
+    from agentchat.channels.{extra} import {provider}
 except ImportError as error:
     assert 'agentchat[{extra}]' in str(error), str(error)
 else:
@@ -76,15 +80,19 @@ else:
 @pytest.mark.parametrize("order", ["explicit_first", "namespace_first"])
 def test_export_identity_in_both_import_orders(order):
     explicit = """
-from agentchat.channels.slack import Slack as SlackDirect, SlackUser as SlackUserDirect
-from agentchat.channels.discord import Discord as DiscordDirect
-from agentchat.channels.teams import Teams as TeamsDirect
-from agentchat.channels.imessage import IMessage as IMessageDirect
-from agentchat.channels.whatsapp import WhatsApp as WhatsAppDirect
+from agentchat.channels.slack.adapter import Slack as SlackDirect, SlackUser as SlackUserDirect
+from agentchat.channels.discord.adapter import Discord as DiscordDirect
+from agentchat.channels.teams.adapter import Teams as TeamsDirect
+from agentchat.channels.imessage.adapter import IMessage as IMessageDirect
+from agentchat.channels.whatsapp.adapter import WhatsApp as WhatsAppDirect
 from agentchat.integrations.openai_agents import should_reply as should_reply_direct
 """
     namespace = """
-from agentchat.channels import Slack, SlackUser, Discord, Teams, IMessage, WhatsApp
+from agentchat.channels.slack import Slack, SlackUser
+from agentchat.channels.discord import Discord
+from agentchat.channels.teams import Teams
+from agentchat.channels.imessage import IMessage
+from agentchat.channels.whatsapp import WhatsApp
 from agentchat.integrations import should_reply
 """
     checks = """

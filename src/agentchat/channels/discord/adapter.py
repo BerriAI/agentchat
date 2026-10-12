@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 import discord
 
-from agentchat.channels._delivery import DeliveryTasks
+from agentchat._delivery import DeliveryTasks
 from agentchat.channels.base import MessageReceiver
 from agentchat.channels.discord.events import normalize
 from agentchat.channels.discord.rendering import text_payload

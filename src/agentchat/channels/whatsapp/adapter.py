@@ -11,7 +11,7 @@ from types import MappingProxyType
 import aiohttp
 from aiohttp import web
 
-from agentchat.channels._delivery import DeliveryTasks
+from agentchat._delivery import DeliveryTasks
 from agentchat.channels.base import MessageReceiver
 from agentchat.channels.whatsapp.events import normalize
 from agentchat.channels.whatsapp.rendering import text_payload

@@ -12,7 +12,7 @@ from microsoft_agents.hosting.aiohttp import CloudAdapter, jwt_authorization_mid
 from microsoft_agents.hosting.core import AgentAuthConfiguration, OutboundHostValidator, TurnContext
 from pydantic import ValidationError
 
-from agentchat.channels._delivery import DeliveryTasks
+from agentchat._delivery import DeliveryTasks
 from agentchat.channels.base import MessageReceiver
 from agentchat.channels.teams.events import normalize
 from agentchat.channels.teams.rendering import text_payload

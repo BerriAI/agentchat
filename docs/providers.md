@@ -11,7 +11,8 @@ a runnable echo example; no agent framework or model key is needed for that chec
 | iMessage | `pip install -e '.[imessage]'` | BlueBubbles Socket.IO + REST | [iMessage](imessage.md) |
 | WhatsApp | `pip install -e '.[whatsapp]'` | Signed HTTPS webhook + Cloud API | [WhatsApp](whatsapp.md) |
 
-Slack's existing install and imports are unchanged. The `whatsapp` extra needs
+Use each provider's own package for imports, following the current Slack guide.
+The `whatsapp` extra needs
 no additional dependency because aiohttp is already installed. Provider packages
 and agent-framework integrations load only when imported. Python 3.11+ is required.
 
@@ -23,7 +24,10 @@ After completing the provider setups, construct just the channels you need:
 import asyncio
 
 from agentchat import AgentChat
-from agentchat.channels import Discord, IMessage, Teams, WhatsApp
+from agentchat.channels.discord import Discord
+from agentchat.channels.imessage import IMessage
+from agentchat.channels.teams import Teams
+from agentchat.channels.whatsapp import WhatsApp
 
 
 async def main():

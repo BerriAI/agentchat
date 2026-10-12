@@ -53,56 +53,101 @@ Applications own sender authorization, agent execution, durable work and deliver
 recovery. Direct channel binding is also supported when an application already
 owns deduplication, ordering and history; see the [Slack guide](slack.md#using-an-existing-agent-runner).
 
-## Slack adapter
+## Provider containment
+
+The shared channel namespace contains only adapter contracts. A provider owns
+its implementations, exports and optional dependency loading:
 
 ```text
-channels/slack/
-├── __init__.py    public Slack and supporting types
-├── adapter.py     lifecycle, subscriptions, history and API coordination
-├── events.py      pure event/attachment normalization
-├── rendering.py   pure text and rich-reply formatting
-├── files.py       uploads and bounded downloads
-└── mirroring.py   external-input rendering and sender/role recovery
+channels/
+├── __init__.py        shared contract exports only
+├── base.py            Channel and optional capability protocols
+└── slack/
+    ├── __init__.py    lazy public Slack exports
+    ├── adapter.py     shared Slack message behavior and Web API operations
+    ├── transport.py   SlackEventSource and its event receiver contract
+    ├── socket_mode.py Socket Mode connection, acknowledgements and shutdown
+    ├── events.py      pure event/attachment normalization
+    ├── rendering.py   pure text and rich-reply formatting
+    ├── files.py       uploads and bounded downloads
+    └── mirroring.py   external-input rendering and sender/role recovery
 ```
 
-Event decoding does not download files. File transport receives explicit request
-callbacks and authorization guards. Slack thread subscriptions stay with Slack;
-they are provider routing policy, not the application's conversation store.
-The adapter retains socket acknowledgement, bounded background tasks and cleanup.
+`base.py` is shared because it defines what any messaging adapter must implement.
+Every Slack-specific module lives below `slack/`. There are no sibling Slack
+compatibility modules or provider aliases in the shared namespace.
 
-Keep new provider implementations in their own packages. Add internal files when
-their responsibilities justify it; a small provider can start with `adapter.py`.
-See [adding a channel](adding-a-channel.md) for the extension contract.
+Discord, Teams, iMessage, and WhatsApp use the same package boundary with
+`adapter.py`, normalization in `events.py`, and text validation in `rendering.py`.
+Discord and BlueBubbles have small REST transport modules too. The provider-neutral
+private helper `agentchat/_delivery.py` shares bounded background dispatch and
+cleanup. Provider authentication, acknowledgement, and overflow policy stay in
+each adapter. See the [provider guides](providers.md) for supported operations.
 
-Discord, Teams, iMessage, and WhatsApp follow this package boundary with
-`adapter.py`, pure normalization in `events.py`, and text validation in
-`rendering.py`. Discord and BlueBubbles have small REST transport modules too.
-`channels/_delivery.py` shares bounded background dispatch and cleanup among
-these adapters. It is a private composition helper, not a channel superclass;
-provider authentication, acknowledgement, and overflow policy stay in each adapter.
-The [provider guides](providers.md) describe their supported operations and limits.
+## Composition
 
-## Public imports and compatibility
+The generic adapter boundary remains `Channel`. Within Slack, replace event
+delivery independently of message behavior:
 
-Both `from agentchat.channels import Slack` and
-`from agentchat.channels.slack import Slack` remain supported. Root-level message
-and context imports are unchanged; `agentchat.models.MessageContext` and
-`agentchat.models.Conversation` resolve to the same classes as `agentchat.context`.
+```text
+SocketMode ────────────┐
+                       ├── SlackEventSource ── Slack.handle_event ── AgentChat
+application event feed ┘                           │
+                                                  ├── subscriptions/history
+                                                  └── replies/files/status
+```
 
-The `channels` and `integrations` namespaces load concrete implementations only
-when requested. Importing the core does not import Slack, aiohttp or OpenAI Agents.
-Installation defaults are unchanged: Slack dependencies remain installed with the
-base package, while OpenAI Agents still uses the `openai` extra.
-Discord, Teams, and iMessage use separate optional extras. WhatsApp uses aiohttp
-from the base install. Requesting one provider does not import the other providers.
+`Slack.run()` authenticates the bot and checks the configured workspace before
+starting its source. The source calls the same `handle_event` method for every
+payload, so normalization, subscription filtering, sender identity and replies
+remain shared. `Slack.close()` and `is_connected()` delegate source lifecycle.
+The default Socket Mode implementation owns socket SDK imports, acknowledgement,
+bounded event tasks and graceful shutdown.
 
-The documented legacy helper modules forward to canonical implementations:
+Supply exactly one of `app_token` (the Socket Mode convenience) or `event_source`
+(an application-owned source). A custom source requires no app token and does
+not import or instantiate Socket Mode. See the [composition guide](slack.md#composing-event-sources).
 
-| Compatibility module | Canonical location |
+| Replaceable concern | Injection point | Responsibility |
+| --- | --- | --- |
+| Incoming events | `Slack(event_source=...)` | Deliver authenticated Slack events; own input lifecycle |
+| Slack Web API calls | `Slack(web_client=...)` | Provide the existing `SlackWebClient` operations |
+| Followed threads | `Slack(thread_subscriptions=...)` | Persist or expire Slack thread subscriptions |
+| Conversation state | `AgentChat(state=...)` | Claim events, serialize conversations, retain history |
+| Agent execution | `@app.on_message` | Authorize sender and call the application's runner |
+
+Event decoding never downloads files. Standalone event and rendering helpers can
+be imported without provider SDKs. File transport helpers accept explicit request
+callbacks and authorization guards. Applications retain HTTP signature checking,
+durable queues, authorization and ambiguous-delivery recovery.
+
+Raw event envelopes, acknowledgement and connection behavior are provider-specific;
+they do not belong in the generic `Channel` contract. A new provider can use a
+similar composition seam when it has multiple input mechanisms, without inheriting
+Slack code or changing `AgentChat`.
+
+## Import migration
+
+This cleanup deliberately removes old Slack shortcut/helper imports. Update them
+as follows; no hidden aliases are retained:
+
+| Previous import | Current import |
 | --- | --- |
-| `channels.slack_files` | `channels.slack.events` for attachment normalization; `channels.slack.files` for downloads |
-| `channels.slack_media` | `channels.slack.rendering` for formatting; `channels.slack.files` for uploads |
-| `channels.slack_mirror` | `channels.slack.mirroring` |
+| `from agentchat.channels import Slack, SlackUser` | `from agentchat.channels.slack import Slack, SlackUser` |
+| `agentchat.channels.slack_files.slack_attachments` | `agentchat.channels.slack.events.slack_attachments` |
+| `agentchat.channels.slack_files.download_slack_file` | `agentchat.channels.slack.files.download_slack_file` |
+| `agentchat.channels.slack_media.upload_slack_files` | `agentchat.channels.slack.files.upload_slack_files` |
+| `agentchat.channels.slack_media.rich_payload` | `agentchat.channels.slack.rendering.rich_payload` |
+| `agentchat.channels.slack_mirror.mirror_payload` | `agentchat.channels.slack.mirroring.mirror_payload` |
 
-New code should import the canonical modules. Tests that patch implementation
-details should patch the defining module, not a compatibility re-export.
+Other rendering helpers (`text_blocks`), file helpers (`upload_bytes`,
+`validate_destination`, `SlackRequest`, `DeliveryGuard`) and `read_mirror` are
+available from the corresponding canonical modules above.
+
+Root-level message and context imports are unchanged. Importing the core does
+not import Slack, aiohttp or OpenAI Agents. Installation defaults are unchanged:
+Slack dependencies remain installed with the base package, while OpenAI Agents
+still uses the `openai` extra.
+
+Discord, Teams, and iMessage use separate optional extras. WhatsApp uses aiohttp
+from the base install. Requesting one provider does not import the others.

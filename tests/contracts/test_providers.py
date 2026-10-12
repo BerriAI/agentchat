@@ -6,10 +6,13 @@ import pytest
 from aiohttp import web
 
 from agentchat import AgentChat, RichReply, UploadFile
-from agentchat.channels import Discord, IMessage, Teams, WhatsApp
+from agentchat.channels.discord import Discord
 from agentchat.channels.discord.events import normalize as discord_message
+from agentchat.channels.imessage import IMessage
 from agentchat.channels.imessage.events import normalize as imessage_message
+from agentchat.channels.teams import Teams
 from agentchat.channels.teams.events import normalize as teams_message
+from agentchat.channels.whatsapp import WhatsApp
 from agentchat.channels.whatsapp.events import normalize as whatsapp_messages
 from tests.support.discord import DiscordClient, discord_event
 from tests.support.imessage import BubblesClient, SocketClient, imessage_event

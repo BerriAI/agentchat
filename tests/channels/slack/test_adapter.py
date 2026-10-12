@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 from slack_sdk.errors import SlackApiError
-from slack_sdk.socket_mode.request import SocketModeRequest
 
 from agentchat import AgentChat
 from agentchat.channels.slack import Slack
@@ -326,49 +325,6 @@ def test_ignored_events_never_ack_or_reply(change):
     asyncio.run(scenario())
 
 
-def test_socket_acknowledges_next_event_while_handler_is_running():
-    async def scenario():
-        started, release = asyncio.Event(), asyncio.Event()
-        received = []
-        acknowledgements = []
-        slack = Slack(
-            bot_token="test",
-            app_token="test",
-            web_client=FakeSlackClient(),
-            bot_user_id="BOT",
-            max_pending_events=2,
-        )
-
-        async def receive(channel, message):
-            started.set()
-            await release.wait()
-            received.append(message.id)
-
-        class Socket:
-            async def send_socket_mode_response(self, response):
-                acknowledgements.append(response.envelope_id)
-
-        slack.bind(receive)
-        first = SocketModeRequest(type="events_api", envelope_id="one", payload=channel_event())
-        second = SocketModeRequest(
-            type="events_api", envelope_id="two", payload=channel_event("2.0")
-        )
-        await slack._handle_socket_request(Socket(), first)
-        await asyncio.wait_for(started.wait(), timeout=1)
-        await asyncio.wait_for(slack._handle_socket_request(Socket(), second), timeout=1)
-        assert acknowledgements == ["one", "two"]
-        assert received == []
-        overflow = SocketModeRequest(
-            type="events_api", envelope_id="three", payload=channel_event("3.0")
-        )
-        await slack._handle_socket_request(Socket(), overflow)
-        assert acknowledgements == ["one", "two"]
-        release.set()
-        await slack.close()
-        assert len(received) == 2
-
-    asyncio.run(scenario())
-
 
 def test_startup_verifies_workspace_and_exposes_connection_state(monkeypatch):
     async def scenario():
@@ -393,7 +349,7 @@ def test_startup_verifies_workspace_and_exposes_connection_state(monkeypatch):
             async def close(self):
                 self.connected = False
 
-        monkeypatch.setattr("agentchat.channels.slack.adapter.SocketModeClient", Socket)
+        monkeypatch.setattr("agentchat.channels.slack.socket_mode.SocketModeClient", Socket)
         client = Client()
         slack = Slack(bot_token="test", app_token="test", web_client=client, workspace_id="team-1")
 

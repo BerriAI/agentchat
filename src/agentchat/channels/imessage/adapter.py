@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import socketio
 
-from agentchat.channels._delivery import DeliveryTasks
+from agentchat._delivery import DeliveryTasks
 from agentchat.channels.base import MessageReceiver
 from agentchat.channels.imessage.events import normalize
 from agentchat.channels.imessage.rendering import text_payload
