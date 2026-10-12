@@ -4,7 +4,7 @@ import json
 
 from agents import Agent, Model, RunConfig, Runner
 from agents.items import TResponseInputItem
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agentchat.models import Message
 
@@ -23,6 +23,8 @@ def to_openai_input(
 
 
 class _ReplyDecision(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     reply: bool
 
 
@@ -42,12 +44,15 @@ async def should_reply(
     instructions: str = _REPLY_INSTRUCTIONS, run_config: RunConfig | None = None,
 ) -> bool:
     """Optional tool-free relevance check. Call after authorization; failures propagate."""
+    # Some providers translate structured output into an unsupported forced tool call.
+    # Request ordinary text and validate locally without changing the supplied context.
+    decision_format = '\nReturn only a JSON object: {"reply":true} or {"reply":false}. No Markdown.'
     result = await Runner.run(
-        Agent(name="Conversation reply filter", instructions=instructions,
-              model=model, output_type=_ReplyDecision),
+        Agent(name="Conversation reply filter", instructions=instructions + decision_format,
+              model=model),
         input=inputs, max_turns=1,
         run_config=run_config or RunConfig(
             tracing_disabled=True, trace_include_sensitive_data=False,
         ),
     )
-    return _ReplyDecision.model_validate(result.final_output).reply
+    return _ReplyDecision.model_validate_json(result.final_output).reply
