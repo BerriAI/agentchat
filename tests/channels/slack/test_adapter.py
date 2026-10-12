@@ -5,21 +5,9 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.socket_mode.request import SocketModeRequest
 
 from agentchat import AgentChat
-from agentchat.channels import Slack
+from agentchat.channels.slack import Slack
 from agentchat.state import MemoryState
-
-
-class FakeSlackClient:
-    def __init__(self) -> None:
-        self.posts: list[dict[str, object]] = []
-        self.reactions: list[dict[str, object]] = []
-
-    async def chat_postMessage(self, **kwargs):
-        self.posts.append(kwargs)
-        return {"ok": True, "ts": str(len(self.posts))}
-
-    async def reactions_add(self, **kwargs):
-        self.reactions.append(kwargs)
+from tests.support.slack import FakeSlackClient, channel_event
 
 
 @pytest.mark.asyncio
@@ -147,6 +135,9 @@ def test_slack_dm_round_trip_preserves_one_conversation() -> None:
             {
                 "channel": "dm-1",
                 "text": "I remember 1 messages",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "I remember 1 messages", "verbatim": True,
+                }}],
                 "thread_ts": None,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -154,6 +145,9 @@ def test_slack_dm_round_trip_preserves_one_conversation() -> None:
             {
                 "channel": "dm-1",
                 "text": "I remember 3 messages",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "I remember 3 messages", "verbatim": True,
+                }}],
                 "thread_ts": None,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -194,6 +188,9 @@ def test_slack_mention_replies_in_thread_and_deduplicates() -> None:
             {
                 "channel": "channel-1",
                 "text": "hello",
+                "blocks": [{"type": "section", "expand": True, "text": {
+                    "type": "mrkdwn", "text": "hello", "verbatim": True,
+                }}],
                 "thread_ts": "1.0",
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -201,21 +198,6 @@ def test_slack_mention_replies_in_thread_and_deduplicates() -> None:
         ]
 
     asyncio.run(scenario())
-
-
-def channel_event(ts="1.0", text="<@BOT> inspect <@TARGET>", **extra):
-    return {
-        "event_id": f"event-{ts}",
-        "team_id": "team-1",
-        "event": {
-            "type": "app_mention",
-            "channel": "channel-1",
-            "user": "user-1",
-            "ts": ts,
-            "text": text,
-            **extra,
-        },
-    }
 
 
 @pytest.mark.parametrize("channel_type", ["channel", "group"])
@@ -411,7 +393,7 @@ def test_startup_verifies_workspace_and_exposes_connection_state(monkeypatch):
             async def close(self):
                 self.connected = False
 
-        monkeypatch.setattr("agentchat.channels.slack.SocketModeClient", Socket)
+        monkeypatch.setattr("agentchat.channels.slack.adapter.SocketModeClient", Socket)
         client = Client()
         slack = Slack(bot_token="test", app_token="test", web_client=client, workspace_id="team-1")
 

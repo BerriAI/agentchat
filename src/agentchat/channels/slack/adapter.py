@@ -1,10 +1,11 @@
+"""Slack channel facade with Socket Mode lifecycle and native capabilities."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -16,7 +17,23 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agentchat.channels.base import MessageReceiver
-from agentchat.models import Message, Sender
+from agentchat.channels.slack.events import slack_attachments, to_message
+from agentchat.channels.slack.files import (
+    download_slack_file,
+    upload_slack_files,
+    validate_destination,
+)
+from agentchat.channels.slack.mirroring import mirror_payload, read_mirror
+from agentchat.channels.slack.rendering import rich_payload, text_blocks
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    RichReply,
+    Sender,
+    UploadedFile,
+    UploadFile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,21 +75,17 @@ class MemoryThreadSubscriptions:
 
 
 class SlackWebClient(Protocol):
+    async def api_call(self, api_method: str, **kwargs: object) -> Mapping[str, object]: ...
+
     async def auth_test(self) -> Mapping[str, object]: ...
 
     async def users_info(self, *, user: str) -> Mapping[str, object]: ...
 
     async def conversations_replies(self, **kwargs: object) -> Mapping[str, object]: ...
 
-    async def chat_postMessage(
-        self,
-        *,
-        channel: str,
-        text: str,
-        thread_ts: str | None,
-        unfurl_links: bool,
-        unfurl_media: bool,
-    ) -> Mapping[str, object]: ...
+    async def chat_postMessage(self, **kwargs: object) -> Mapping[str, object]: ...
+
+    async def assistant_threads_setStatus(self, **kwargs: object) -> Mapping[str, object]: ...
 
     async def reactions_add(
         self, *, channel: str, name: str, timestamp: str
@@ -100,7 +113,7 @@ class Slack:
         self._app_token = app_token
         self._web_client = cast(
             SlackWebClient,
-            web_client or AsyncWebClient(token=bot_token),
+            web_client or AsyncWebClient(token=bot_token, retry_handlers=[]),
         )
         self._socket_client: SocketModeClient | None = None
         self._receiver: MessageReceiver | None = None
@@ -113,12 +126,12 @@ class Slack:
         self._tasks: set[asyncio.Task[None]] = set()
 
     @classmethod
-    def from_env(cls) -> Slack:
+    def from_env(cls, *, ack_emoji: str | None = "eyes") -> Slack:
         bot_token = os.getenv("SLACK_BOT_TOKEN")
         app_token = os.getenv("SLACK_APP_TOKEN")
         if not bot_token or not app_token:
             raise RuntimeError("SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required")
-        return cls(bot_token=bot_token, app_token=app_token)
+        return cls(bot_token=bot_token, app_token=app_token, ack_emoji=ack_emoji)
 
     def bind(self, receiver: MessageReceiver) -> None:
         self._receiver = receiver
@@ -214,7 +227,7 @@ class Slack:
         for _ in range(5):
             response = await self._web_client.conversations_replies(
                 channel=channel, ts=thread, latest=current, inclusive=False,
-                limit=100, cursor=cursor,
+                limit=100, cursor=cursor, include_all_metadata=True,
             )
             records = response.get("messages")
             if response.get("ok") is not True or not isinstance(records, list):
@@ -222,19 +235,26 @@ class Slack:
             for record in records:
                 if not isinstance(record, Mapping):
                     continue
-                ts, text = record.get("ts"), record.get("text")
+                ts, text = record.get("ts"), record.get("text", "")
+                attachments = slack_attachments(record.get("files"))
                 sender = record.get("user") or record.get("bot_id")
-                if not all(isinstance(value, str) and value for value in (ts, text, sender)):
+                if (not all(isinstance(value, str) and value for value in (ts, sender))
+                        or not isinstance(text, str) or (not text.strip() and not attachments)):
                     continue
                 if float(ts) >= float(current):
                     continue
+                mirror = read_mirror(record, bot_user_id=self._bot_user_id)
                 item = Message(
                     id=f"slack:{source.metadata['team_id']}:{channel}:{ts}",
                     conversation_id=source.conversation_id, channel=self.name,
-                    sender=Sender(id=cast(str, sender)), text=cast(str, text),
-                    role="assistant" if sender == self._bot_user_id else "user",
+                    sender=mirror[0] if mirror else Sender(id=cast(str, sender)),
+                    text=mirror[1] if mirror else cast(str, text),
+                    role="assistant" if sender == self._bot_user_id and not mirror else "user",
                     thread_id=cast(str, thread),
-                    metadata=MappingProxyType({"message_timestamp": ts}),
+                    metadata=MappingProxyType({"message_timestamp": ts,
+                        "team_id": source.metadata["team_id"], "channel_id": channel,
+                        "reply_thread_timestamp": thread}),
+                    attachments=attachments,
                 )
                 if ts == thread:
                     root = item
@@ -262,7 +282,10 @@ class Slack:
         if not isinstance(event_value, Mapping):
             return
         event = cast(Mapping[str, object], event_value)
-        message = self._to_message(payload, event)
+        message = to_message(
+            payload, event, bot_user_id=self._bot_user_id,
+            workspace_id=self._workspace_id, channel_name=self.name,
+        )
         if message is not None:
             if message.metadata["requires_subscription"] and not await self._threads.contains(
                 message.conversation_id
@@ -283,12 +306,96 @@ class Slack:
         except Exception:
             pass
 
+    async def set_status(self, source: Message, status: str) -> bool:
+        """Set Slack's native working indicator in the existing reply thread.
+
+        Slack prefixes the app name and expires status after two minutes. Empty
+        text clears it. Plain DMs return False: setting status there would open a
+        new thread, changing the destination where users expect the answer.
+        """
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        channel_id = source.metadata.get("channel_id")
+        thread = source.metadata.get("reply_thread_timestamp")
+        if not isinstance(channel_id, str) or not channel_id:
+            raise ValueError("Expected a Slack channel destination")
+        if thread is None:
+            return False
+        if not isinstance(thread, str) or not thread:
+            raise ValueError("Expected a Slack thread destination")
+        response = await self._web_client.assistant_threads_setStatus(
+            channel_id=channel_id, thread_ts=thread, status=status,
+        )
+        if response.get("ok") is not True:
+            raise RuntimeError("Slack working status could not be confirmed")
+        return True
+
+    def _delivery_destination(self, source: Message) -> tuple[str, str | None]:
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        channel_id = source.metadata.get("channel_id")
+        thread = source.metadata.get("reply_thread_timestamp")
+        if not isinstance(channel_id, str) or not channel_id:
+            raise ValueError("Expected a Slack channel destination")
+        if thread is not None and (not isinstance(thread, str) or not thread):
+            raise ValueError("Expected a Slack thread destination")
+        validate_destination(channel_id, thread)
+        return channel_id, thread
+
+    async def upload_files(
+        self, source: Message, files: Sequence[UploadFile],
+    ) -> tuple[UploadedFile, ...]:
+        channel_id, thread = self._delivery_destination(source)
+
+        async def request(api: str, payload: dict[str, object]) -> Mapping[str, object]:
+            body = {"data": payload} if api == "files.getUploadURLExternal" else {"json": payload}
+            return await self._web_client.api_call(api, http_verb="POST", **body)
+
+        return await upload_slack_files(files, request=request, channel_id=channel_id,
+                                        thread_ts=thread)
+
+    async def download_attachment(
+        self, source: Message, attachment: Attachment, *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile:
+        if (source.channel != self.name or source.role != "user"
+                or (self._workspace_id and source.metadata.get("team_id") != self._workspace_id)):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        if attachment not in source.attachments:
+            raise ValueError("Attachment does not belong to the source message")
+
+        async def request(api: str, payload: dict[str, object]) -> Mapping[str, object]:
+            return await self._web_client.api_call(api, http_verb="GET", params=payload)
+
+        return await download_slack_file(attachment, bot_token=self._bot_token,
+                                         request=request, max_bytes=max_bytes)
+
+    async def reply_rich(self, source: Message, content: RichReply) -> Message:
+        channel_id, thread = self._delivery_destination(source)
+        response = await self._web_client.chat_postMessage(
+            channel=channel_id, thread_ts=thread, **rich_payload(content),
+        )
+        timestamp = response.get("ts")
+        if response.get("ok") is not True or not isinstance(timestamp, str) or not timestamp:
+            raise RuntimeError("Slack rich reply delivery could not be confirmed")
+        return Message(
+            id=f"slack:{channel_id}:{timestamp}", conversation_id=source.conversation_id,
+            channel=self.name, sender=Sender(id="agentchat", display_name="AgentChat"),
+            text=content.text, role="assistant", thread_id=source.thread_id,
+            metadata=MappingProxyType({"channel_id": channel_id,
+                "reply_thread_timestamp": thread, "message_timestamp": timestamp}),
+        )
+
     async def reply(self, source: Message, content: str) -> Message:
         channel_id = cast(str, source.metadata["channel_id"])
         thread_timestamp = cast(str | None, source.metadata.get("reply_thread_timestamp"))
         response = await self._web_client.chat_postMessage(
             channel=channel_id,
             text=content,
+            blocks=text_blocks(content),
             thread_ts=thread_timestamp,
             unfurl_links=False,
             unfurl_media=False,
@@ -311,6 +418,31 @@ class Slack:
             ),
         )
 
+    async def mirror(self, source: Message, message: Message, *, origin: str = "web") -> Message:
+        if source.channel != self.name or (
+            self._workspace_id and source.metadata.get("team_id") != self._workspace_id
+        ):
+            raise ValueError("Expected a source in the configured Slack workspace")
+        payload = mirror_payload(message, origin=origin)
+        channel_id = source.metadata["channel_id"]
+        thread = source.metadata.get("reply_thread_timestamp")
+        response = await self._web_client.chat_postMessage(
+            channel=channel_id, thread_ts=thread, **payload,
+        )
+        timestamp = response.get("ts")
+        if response.get("ok") is not True or not isinstance(timestamp, str) or not timestamp:
+            raise RuntimeError("Slack mirror delivery could not be confirmed")
+        return Message(
+            id=f"slack:{channel_id}:{timestamp}", conversation_id=source.conversation_id,
+            channel=self.name, sender=message.sender, text=message.text, role="user",
+            thread_id=source.thread_id,
+            metadata=MappingProxyType({
+                "channel_id": channel_id, "reply_thread_timestamp": thread,
+                "message_timestamp": timestamp, "mirrored_message_id": message.id,
+                "origin": origin,
+            }),
+        )
+
     async def _handle_socket_request(
         self, client: AsyncBaseSocketModeClient, request: SocketModeRequest
     ) -> None:
@@ -327,86 +459,3 @@ class Slack:
         self._tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
             logger.warning("Slack handler failed (%s)", type(error).__name__)
-
-    def _to_message(
-        self,
-        payload: Mapping[str, object],
-        event: Mapping[str, object],
-    ) -> Message | None:
-        event_type = event.get("type")
-        is_direct_message = event_type == "message" and event.get("channel_type") == "im"
-        if event.get("bot_id") is not None or event.get("subtype") is not None:
-            return None
-        user_id = event.get("user")
-        channel_id = event.get("channel")
-        timestamp = event.get("ts")
-        text = event.get("text")
-        if not isinstance(user_id, str) or not user_id or user_id == self._bot_user_id:
-            return None
-        if not isinstance(channel_id, str) or not channel_id:
-            return None
-        if not isinstance(timestamp, str) or not timestamp:
-            return None
-        if not isinstance(text, str) or not text.strip():
-            return None
-        team_id = payload.get("team_id")
-        if not isinstance(team_id, str) or not team_id:
-            return None
-        if self._workspace_id is not None and team_id != self._workspace_id:
-            return None
-        thread_timestamp_value = event.get("thread_ts")
-        if thread_timestamp_value is not None and (
-            not isinstance(thread_timestamp_value, str) or not thread_timestamp_value
-        ):
-            return None
-        thread_timestamp = (
-            thread_timestamp_value if isinstance(thread_timestamp_value, str) else timestamp
-        )
-        bot_mention = f"<@{self._bot_user_id}>" if self._bot_user_id else None
-        is_channel_message = event_type == "message" and event.get("channel_type") in (
-            "channel",
-            "group",
-        )
-        is_mention = event_type == "app_mention" or (
-            is_channel_message and bot_mention is not None and bot_mention in text
-        )
-        is_thread_reply = is_channel_message and thread_timestamp_value is not None
-        if not (is_direct_message or is_mention or is_thread_reply):
-            return None
-        conversation_id = (
-            f"slack:{team_id}:{channel_id}"
-            if is_direct_message
-            else f"slack:{team_id}:{channel_id}:{thread_timestamp}"
-        )
-        event_id_value = payload.get("event_id")
-        event_id = (
-            event_id_value if isinstance(event_id_value, str) else f"{channel_id}:{timestamp}"
-        )
-        normalized_text = text.replace(bot_mention, "").strip() if bot_mention else text.strip()
-        if not normalized_text:
-            return None
-        return Message(
-            id=f"slack:{team_id}:{channel_id}:{timestamp}",
-            conversation_id=conversation_id,
-            channel=self.name,
-            sender=Sender(id=user_id),
-            text=normalized_text,
-            role="user",
-            thread_id=thread_timestamp_value if is_direct_message else thread_timestamp,
-            addressed=is_direct_message or is_mention,
-            metadata=MappingProxyType(
-                {
-                    "channel_id": channel_id,
-                    "team_id": team_id,
-                    "event_id": event_id,
-                    "channel_type": "im"
-                    if is_direct_message
-                    else event.get("channel_type", "channel"),
-                    "reply_thread_timestamp": thread_timestamp_value
-                    if is_direct_message
-                    else thread_timestamp,
-                    "message_timestamp": timestamp,
-                    "requires_subscription": not is_direct_message and not is_mention,
-                }
-            ),
-        )

@@ -6,8 +6,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from agentchat.app import AgentChat
-    from agentchat.channels.base import Channel
+    from agentchat.context import Conversation, MessageContext
+
+__all__ = [
+    "Attachment", "Conversation", "DownloadedFile", "Message", "MessageContext", "RichReply",
+    "Role", "Sender", "UploadFile", "UploadedFile",
+]
 
 Role = Literal["user", "assistant"]
 
@@ -16,6 +20,26 @@ Role = Literal["user", "assistant"]
 class Sender:
     id: str
     display_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    """Incoming provider file reference; metadata is advisory, never a download URL."""
+
+    id: str
+    name: str | None = None
+    media_type: str | None = None
+    size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedFile:
+    """Explicitly fetched bytes; the host owns content validation and storage."""
+
+    id: str
+    name: str
+    content: bytes = field(repr=False)
+    media_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,36 +53,43 @@ class Message:
     metadata: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     thread_id: str | None = None
     addressed: bool = True
+    attachments: tuple[Attachment, ...] = ()
 
 
-class Conversation:
-    def __init__(self, app: AgentChat, conversation_id: str) -> None:
-        self._app = app
-        self.id = conversation_id
+@dataclass(frozen=True, slots=True)
+class RichReply:
+    """Fallback text and explicitly provider-compatible rich content."""
 
-    async def history(self, *, limit: int | None = None) -> tuple[Message, ...]:
-        return await self._app.state.history(self.id, limit=limit)
+    text: str
+    blocks: tuple[Mapping[str, object], ...] = ()
+    attachments: tuple[Mapping[str, object], ...] = ()
 
 
-class MessageContext:
-    def __init__(self, app: AgentChat, channel: Channel, message: Message) -> None:
-        self._app = app
-        self._channel = channel
-        self.message = message
-        self.sender = message.sender
-        self.conversation = Conversation(app, message.conversation_id)
+@dataclass(frozen=True, slots=True)
+class UploadFile:
+    """File bytes selected and authorized by the host application."""
 
-    async def history(self, *, limit: int = 30) -> tuple[Message, ...]:
-        """Get shared conversation context, including this turn. Call after authorization."""
-        from agentchat.channels.base import ThreadHistoryChannel
+    filename: str
+    content: bytes
+    title: str | None = None
 
-        if not 2 <= limit <= 100:
-            raise ValueError("History limit must be between 2 and 100")
-        if self.message.thread_id is not None and isinstance(self._channel, ThreadHistoryChannel):
-            previous = await self._channel.thread_history(self.message, limit=limit)
-            messages = (*previous, self.message)
-            return messages if len(messages) <= limit else messages[:1] + messages[-(limit - 1):]
-        return await self.conversation.history(limit=limit)
 
-    async def reply(self, content: str) -> Message:
-        return await self._app.reply(self._channel, self.message, content)
+@dataclass(frozen=True, slots=True)
+class UploadedFile:
+    """Confirmed provider file identity; not a conversation message."""
+
+    id: str
+    permalink: str | None = None
+
+
+def __getattr__(name: str) -> object:
+    # Preserve the original imports without making value types depend on the runtime.
+    if name in {"Conversation", "MessageContext"}:
+        from agentchat import context
+
+        return getattr(context, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

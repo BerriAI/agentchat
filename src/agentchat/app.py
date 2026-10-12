@@ -3,8 +3,24 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
-from agentchat.channels.base import Channel
-from agentchat.models import Message, MessageContext
+from agentchat.activity import WorkingStatus
+from agentchat.channels.base import (
+    Channel,
+    FileDownloadChannel,
+    FileUploadChannel,
+    MirroringChannel,
+    RichReplyChannel,
+    StatusChannel,
+)
+from agentchat.context import MessageContext
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    RichReply,
+    UploadedFile,
+    UploadFile,
+)
 from agentchat.state.base import State
 from agentchat.state.memory import MemoryState
 
@@ -42,6 +58,65 @@ class AgentChat:
 
     async def reply(self, channel: Channel, source: Message, content: str) -> Message:
         response = await channel.reply(source, content)
+        await self.state.append(response)
+        return response
+
+    async def reply_rich(self, channel: Channel, source: Message, content: RichReply) -> Message:
+        """Send rich content once and append only the confirmed response to history."""
+        if not isinstance(channel, RichReplyChannel):
+            raise TypeError("This channel does not support rich replies")
+        response = await channel.reply_rich(source, content)
+        await self.state.append(response)
+        return response
+
+    async def upload_files(
+        self, channel: Channel, source: Message, files: Sequence[UploadFile],
+    ) -> tuple[UploadedFile, ...]:
+        """Upload authorized bytes once; return receipts without inventing history."""
+        if not isinstance(channel, FileUploadChannel):
+            raise TypeError("This channel does not support file uploads")
+        return await channel.upload_files(source, files)
+
+    async def set_status(self, channel: Channel, source: Message, status: str) -> bool:
+        """Set or clear transient status; return False for unsupported channels."""
+        if not isinstance(channel, StatusChannel):
+            return False
+        return await channel.set_status(source, status)
+
+    async def download_attachment(
+        self, channel: Channel, source: Message, attachment: Attachment,
+        *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile:
+        """Download on demand without putting file bytes in conversation history."""
+        if not isinstance(channel, FileDownloadChannel):
+            raise TypeError("This channel does not support attachment downloads")
+        if attachment not in source.attachments:
+            raise ValueError("Attachment does not belong to the source message")
+        return await channel.download_attachment(source, attachment, max_bytes=max_bytes)
+
+    def working(
+        self, channel: Channel, source: Message, status: str = "is working…",
+        *, refresh_interval: float = 60,
+    ) -> WorkingStatus:
+        """Refresh activity until context exit, including exceptions/cancellation."""
+        return WorkingStatus(
+            lambda text: self.set_status(channel, source, text), status,
+            refresh_interval=refresh_interval,
+        )
+
+    async def mirror(
+        self, channel: Channel, source: Message, message: Message, *, origin: str = "web"
+    ) -> Message:
+        """Post an authorized external input without invoking the agent handler.
+
+        The caller owns authorization, destination binding and durable delivery.
+        Each invocation attempts a send; do not blindly retry ambiguous failures.
+        """
+        if message.role != "user":
+            raise ValueError("Only user inputs can be mirrored")
+        if not isinstance(channel, MirroringChannel):
+            raise TypeError("This channel does not support mirroring")
+        response = await channel.mirror(source, message, origin=origin)
         await self.state.append(response)
         return response
 

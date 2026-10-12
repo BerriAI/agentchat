@@ -1,14 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, runtime_checkable
 
-from agentchat.models import Message
+from agentchat.models import (
+    Attachment,
+    DownloadedFile,
+    Message,
+    RichReply,
+    UploadedFile,
+    UploadFile,
+)
 
 MessageReceiver = Callable[["Channel", Message], Awaitable[None]]
 
 
 class Channel(Protocol):
+    """Messaging adapter consumed by AgentChat; no inheritance is required.
+
+    Bind a receiver before running, emit normalized messages with stable IDs,
+    and return confirmed replies in the source conversation. Transport failures
+    propagate to the caller. The adapter owns connection resources and cleanup;
+    AgentChat owns deduplication, conversation ordering, and local history.
+    """
+
     name: str
 
     def bind(self, receiver: MessageReceiver) -> None: ...
@@ -25,3 +40,42 @@ class ThreadHistoryChannel(Protocol):
     """Optional channel capability: authoritative thread messages before the current turn."""
 
     async def thread_history(self, source: Message, *, limit: int = 50) -> tuple[Message, ...]: ...
+
+
+@runtime_checkable
+class MirroringChannel(Protocol):
+    """Optional transport for an authorized user input from another surface."""
+
+    async def mirror(self, source: Message, message: Message, *, origin: str) -> Message: ...
+
+
+@runtime_checkable
+class RichReplyChannel(Protocol):
+    """Optional replies with fallback text and provider-compatible rich content."""
+
+    async def reply_rich(self, source: Message, content: RichReply) -> Message: ...
+
+
+@runtime_checkable
+class FileUploadChannel(Protocol):
+    """Optional uploads of host-authorized bytes to the source conversation."""
+
+    async def upload_files(
+        self, source: Message, files: Sequence[UploadFile],
+    ) -> tuple[UploadedFile, ...]: ...
+
+
+@runtime_checkable
+class FileDownloadChannel(Protocol):
+    """Optional explicit download of an attachment belonging to the source message."""
+
+    async def download_attachment(
+        self, source: Message, attachment: Attachment, *, max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedFile: ...
+
+
+@runtime_checkable
+class StatusChannel(Protocol):
+    """Optional transient activity indicator, separate from conversation history."""
+
+    async def set_status(self, source: Message, status: str) -> bool: ...
