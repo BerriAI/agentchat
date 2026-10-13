@@ -10,9 +10,10 @@ a runnable echo example; no agent framework or model key is needed for that chec
 | Teams | `pip install -e '.[teams]'` | Authenticated HTTPS endpoint | [Teams](teams.md) |
 | iMessage | `pip install -e '.[imessage]'` | BlueBubbles Socket.IO + REST | [iMessage](imessage.md) |
 | WhatsApp | `pip install -e '.[whatsapp]'` | Signed HTTPS webhook + Cloud API | [WhatsApp](whatsapp.md) |
+| Telegram | `pip install -e '.[telegram]'` | Bot API long polling or HTTPS webhook | [Telegram](telegram.md) |
 
 Use each provider's own package for imports, following the current Slack guide.
-The `whatsapp` extra needs
+The `whatsapp` and `telegram` extras need
 no additional dependency because aiohttp is already installed. Provider packages
 and agent-framework integrations load only when imported. Python 3.11+ is required.
 
@@ -83,6 +84,10 @@ These four new adapters implement the minimal `Channel` contract: receive,
 lifecycle, and confirmed text replies. They normalize sender identity and
 incoming attachment references. They do not download those attachments.
 
+Telegram also implements `set_status()` (the typing indicator), `reply_rich()`
+(native reply markup such as inline keyboards), `upload_files()`, and
+`download_attachment()`. It does not implement native history or mirroring.
+
 History uses the application's local `State`; default `MemoryState` is lost on
 restart. Native history, working indicators, rich replies, file transfers, and
 cross-surface mirroring remain optional capabilities. On the new adapters,
@@ -104,6 +109,9 @@ conversation using the configured `State`.
 - Teams returns 202 after admission; WhatsApp returns 200. A full HTTP receiver
   returns 503 before admission so the provider can apply its retry policy.
   WhatsApp batches are admitted atomically.
+- Telegram webhooks return 503 the same way. Telegram polling stops reading at
+  the first update it cannot admit and polls again from it, so Telegram redelivers
+  it instead of the adapter dropping it.
 - Discord and BlueBubbles callbacks cannot ask the gateway to replay an event.
   At capacity, the adapter logs a warning and drops the excess event. Reconnects
   do not provide durable catch-up. Size the limit/host for the expected workload.

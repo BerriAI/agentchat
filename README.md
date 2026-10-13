@@ -1,6 +1,6 @@
 # agentchat
 
-a minimal sdk to connect your agents to slack, teams, imessage, whatsapp.
+a minimal sdk to connect your agents to slack, teams, imessage, whatsapp, telegram.
 
 use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents) and instantly connect it to all supported channels.
 
@@ -187,3 +187,4 @@ async def respond(context: MessageContext) -> str:
 | iMessage | BlueBubbles on a Mac signed into Messages | `imessage` | [iMessage guide](docs/imessage.md) |
 | WhatsApp | Business Cloud API with signed webhooks | `whatsapp` | [WhatsApp guide](docs/whatsapp.md) |
 | Discord | Bot gateway | `discord` | [Discord guide](docs/discord.md) |
+| Telegram | Bot API long polling or HTTPS webhook | `telegram` | [Telegram guide](docs/telegram.md) |
