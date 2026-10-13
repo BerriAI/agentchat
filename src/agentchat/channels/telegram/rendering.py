@@ -1,5 +1,6 @@
 import re
 import string
+from typing import NamedTuple
 
 TELEGRAM_TEXT_LIMIT = 4096
 TELEGRAM_CAPTION_LIMIT = 1024
@@ -39,7 +40,12 @@ def _utf16_len(text: str) -> int:
     return len(text) + sum(1 for char in text if ord(char) > 0xFFFF)
 
 
-class _Builder:
+class RenderedText(NamedTuple):
+    text: str
+    entities: list[dict]
+
+
+class _TextBuilder:
     def __init__(self) -> None:
         self.parts: list[str] = []
         self.length = 0
@@ -67,13 +73,15 @@ def _is_word_char(src: str, index: int) -> bool:
     return 0 <= index < len(src) and bool(_WORD_CHAR.match(src[index]))
 
 
-def _render_inline(b: _Builder, src: str, active: frozenset[str] = frozenset()) -> None:
+def _render_inline(
+    builder: _TextBuilder, src: str, active: frozenset[str] = frozenset(),
+) -> None:
     i = 0
     plain: list[str] = []
 
     def flush() -> None:
         if plain:
-            b.add("".join(plain))
+            builder.add("".join(plain))
             plain.clear()
 
     while i < len(src):
@@ -85,9 +93,9 @@ def _render_inline(b: _Builder, src: str, active: frozenset[str] = frozenset()) 
         link = _LINK.match(src, i)
         if link:
             flush()
-            start = b.length
-            _render_inline(b, link[1], active | {_TEXT_LINK})
-            b.wrap(start, _TEXT_LINK, url=link[2])
+            start = builder.length
+            _render_inline(builder, link[1], active | {_TEXT_LINK})
+            builder.wrap(start, _TEXT_LINK, url=link[2])
             i = link.end()
             continue
 
@@ -108,11 +116,11 @@ def _render_inline(b: _Builder, src: str, active: frozenset[str] = frozenset()) 
                 continue
             flush()
             if entity_type == _CODE:
-                b.add(inner, None if _TEXT_LINK in active else _CODE)
+                builder.add(inner, None if _TEXT_LINK in active else _CODE)
             else:
-                start = b.length
-                _render_inline(b, inner, active | {entity_type})
-                b.wrap(start, entity_type)
+                start = builder.length
+                _render_inline(builder, inner, active | {entity_type})
+                builder.wrap(start, entity_type)
             i = end + len(marker)
             break
         else:
@@ -121,42 +129,42 @@ def _render_inline(b: _Builder, src: str, active: frozenset[str] = frozenset()) 
     flush()
 
 
-def _render_line(b: _Builder, line: str) -> None:
+def _render_line(builder: _TextBuilder, line: str) -> None:
     if heading := _HEADING.fullmatch(line):
-        start = b.length
-        _render_inline(b, heading[1])
-        b.wrap(start, _BOLD)
+        start = builder.length
+        _render_inline(builder, heading[1])
+        builder.wrap(start, _BOLD)
     elif bullet := _BULLET.fullmatch(line):
-        b.add(f"{bullet[1]}• ")
-        _render_inline(b, bullet[2])
+        builder.add(f"{bullet[1]}• ")
+        _render_inline(builder, bullet[2])
     elif numbered := _NUMBERED.fullmatch(line):
-        b.add(f"{numbered[1]}{numbered[2]}. ")
-        _render_inline(b, numbered[3])
+        builder.add(f"{numbered[1]}{numbered[2]}. ")
+        _render_inline(builder, numbered[3])
     else:
-        _render_inline(b, line)
+        _render_inline(builder, line)
 
 
-def _render_block(b: _Builder, block: list[str]) -> None:
+def _render_block(builder: _TextBuilder, block: list[str]) -> None:
     quote_start: int | None = None
     for n, line in enumerate(block):
         quote = _QUOTE.fullmatch(line)
         if quote_start is not None and not quote:
-            b.wrap(quote_start, _BLOCKQUOTE)
+            builder.wrap(quote_start, _BLOCKQUOTE)
             quote_start = None
         if n:
-            b.add("\n")
+            builder.add("\n")
         if quote:
             if quote_start is None:
-                quote_start = b.length
-            _render_inline(b, quote[1])
+                quote_start = builder.length
+            _render_inline(builder, quote[1])
         else:
-            _render_line(b, line)
+            _render_line(builder, line)
     if quote_start is not None:
-        b.wrap(quote_start, _BLOCKQUOTE)
+        builder.wrap(quote_start, _BLOCKQUOTE)
 
 
-def render(markdown: str) -> tuple[str, list[dict]]:
-    b = _Builder()
+def render(markdown: str) -> RenderedText:
+    builder = _TextBuilder()
     lines = markdown.replace("\r\n", "\n").split("\n")
     i = 0
     while i < len(lines):
@@ -171,9 +179,9 @@ def render(markdown: str) -> tuple[str, list[dict]]:
             i += 1
             code = "\n".join(body).rstrip("\n")
             if code:
-                if b.length:
-                    b.add("\n\n")
-                b.add(code, _PRE, **({"language": language} if language else {}))
+                if builder.length:
+                    builder.add("\n\n")
+                builder.add(code, _PRE, **({"language": language} if language else {}))
             continue
 
         if not lines[i].strip():
@@ -184,16 +192,15 @@ def render(markdown: str) -> tuple[str, list[dict]]:
         while i < len(lines) and lines[i].strip() and not _FENCE.fullmatch(lines[i]):
             block.append(lines[i])
             i += 1
-        if b.length:
-            b.add("\n\n")
-        _render_block(b, block)
+        if builder.length:
+            builder.add("\n\n")
+        _render_block(builder, block)
 
-    # Wrappers are appended after their contents, so equal spans list the outer entity first.
     order = sorted(
-        range(len(b.entities)),
-        key=lambda n: (b.entities[n]["offset"], -b.entities[n]["length"], -n),
+        range(len(builder.entities)),
+        key=lambda n: (builder.entities[n]["offset"], -builder.entities[n]["length"], -n),
     )
-    return "".join(b.parts), [b.entities[n] for n in order]
+    return RenderedText("".join(builder.parts), [builder.entities[n] for n in order])
 
 
 def text_payload(content: str) -> dict:

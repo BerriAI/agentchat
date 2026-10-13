@@ -223,8 +223,9 @@ async def test_server_error_backs_off_then_continues(monkeypatch, caplog):
 
 
 def test_retry_delay_schedule():
-    assert [retry_delay(n, None) for n in range(7)] == [1, 2, 4, 8, 16, 30, 30]
-    assert retry_delay(0, 45) == 45
+    schedule = [retry_delay(attempt=n, retry_after=None) for n in range(7)]
+    assert schedule == [1, 2, 4, 8, 16, 30, 30]
+    assert retry_delay(attempt=0, retry_after=45) == 45
 
 
 @pytest.mark.asyncio

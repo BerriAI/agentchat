@@ -8,7 +8,7 @@ from agentchat.channels.telegram import Telegram
 from agentchat.channels.telegram import adapter as telegram_adapter
 from agentchat.channels.telegram.adapter import SECRET_HEADER
 from agentchat.channels.telegram.events import normalize
-from agentchat.channels.telegram.transport import TelegramBotClient
+from agentchat.channels.telegram.transport import TelegramBotClient, TelegramFile
 from tests.support.receipts import Receipt
 
 TOKEN = "42:SECRET-token_abcdef"
@@ -146,7 +146,7 @@ class TelegramClient:
 
     async def download_file(self, file_id, *, max_bytes):
         self.calls.append(("download_file", {"file_id": file_id, "max_bytes": max_bytes}))
-        return f"documents/{file_id}", b"content"
+        return TelegramFile(f"documents/{file_id}", b"content")
 
     async def close(self):
         self.closed = True

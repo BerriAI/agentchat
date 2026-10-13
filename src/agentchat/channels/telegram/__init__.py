@@ -1,5 +1,3 @@
-"""Telegram adapter and provider-local helpers, loaded on demand."""
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

@@ -17,12 +17,32 @@ from aiohttp import web
 
 from agentchat._delivery import DeliveryTasks
 from agentchat.channels.base import MessageReceiver
-from agentchat.channels.telegram.events import normalize
+from agentchat.channels.telegram.events import (
+    METADATA_BOT_ID,
+    METADATA_CALLBACK_DATA,
+    METADATA_CALLBACK_QUERY_ID,
+    METADATA_CHAT_ID,
+    METADATA_MESSAGE_ID,
+    METADATA_THREAD_ID,
+    TELEGRAM_CHANNEL,
+    UPDATE_CALLBACK_QUERY,
+    UPDATE_MESSAGE,
+    normalize,
+)
 from agentchat.channels.telegram.rendering import text_payload, truncate_caption
 from agentchat.channels.telegram.transport import (
+    METHOD_ANSWER_CALLBACK_QUERY,
+    METHOD_DELETE_WEBHOOK,
+    METHOD_GET_ME,
+    METHOD_GET_UPDATES,
+    METHOD_SEND_CHAT_ACTION,
+    METHOD_SEND_DOCUMENT,
+    METHOD_SEND_MESSAGE,
+    METHOD_SET_WEBHOOK,
     REQUEST_TIMEOUT,
     TelegramBotClient,
     TelegramError,
+    TelegramFile,
 )
 from agentchat.models import (
     Attachment,
@@ -36,23 +56,30 @@ from agentchat.models import (
 
 logger = logging.getLogger(__name__)
 
+ENV_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
+ENV_WEBHOOK_URL = "TELEGRAM_WEBHOOK_URL"
+ENV_WEBHOOK_SECRET = "TELEGRAM_WEBHOOK_SECRET"
+ENV_HOST = "TELEGRAM_HOST"
+ENV_PORT = "TELEGRAM_PORT"
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 3980
 POLL_TIMEOUT = 30
-# The HTTP timeout must outlive Telegram's long-poll hold or every empty poll times out.
-POLL_HTTP_MARGIN = 10
-ALLOWED_UPDATES = ["message", "callback_query"]
+POLL_REQUEST_TIMEOUT = POLL_TIMEOUT + 10
+ALLOWED_UPDATES = [UPDATE_MESSAGE, UPDATE_CALLBACK_QUERY]
 WEBHOOK_PATH = "/webhooks/telegram"
 SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 RETRY_BASE = 1.0
 RETRY_MAX = 30.0
 BUSY_DELAY = 1.0
-CONFIRM_TIMEOUT = 2
-ANSWER_TIMEOUT = 5
+OFFSET_CONFIRM_TIMEOUT = 2
+CALLBACK_ANSWER_TIMEOUT = 5
 # Telegram clears a chat action after about five seconds.
 TYPING_INTERVAL = 4
 TYPING_EXPIRY = 120
+CHAT_ACTION_TYPING = "typing"
 BOT_TOKEN_PATTERN = re.compile(r"([0-9]+):[A-Za-z0-9_-]+")
 WEBHOOK_SECRET_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,256}")
-CALLBACK_ONLY_METADATA = frozenset({"callback_query_id", "callback_data"})
+CALLBACK_ONLY_METADATA = frozenset({METADATA_CALLBACK_QUERY_ID, METADATA_CALLBACK_DATA})
 
 
 class BotAPIClient(Protocol):
@@ -68,7 +95,7 @@ class BotAPIClient(Protocol):
         self, *, method: str, fields: dict, file_field: str, filename: str, content: bytes,
     ) -> Any: ...
 
-    async def download_file(self, file_id: str, *, max_bytes: int) -> tuple[str, bytes]: ...
+    async def download_file(self, file_id: str, *, max_bytes: int) -> TelegramFile: ...
 
     async def close(self) -> None: ...
 
@@ -79,7 +106,7 @@ class _Destination(NamedTuple):
     thread_id: int | None
 
 
-def retry_delay(attempt: int, retry_after: int | None) -> float:
+def retry_delay(*, attempt: int, retry_after: int | None) -> float:
     if retry_after:
         return float(retry_after)
     return min(RETRY_BASE * 2**attempt, RETRY_MAX)
@@ -97,9 +124,7 @@ def _is_plain_filename(filename: object) -> bool:
 
 
 class Telegram:
-    """Telegram Bot API: long polling by default, or a secret-checked webhook."""
-
-    name = "telegram"
+    name = TELEGRAM_CHANNEL
 
     def __init__(
         self,
@@ -107,8 +132,8 @@ class Telegram:
         bot_token: str,
         webhook_url: str | None = None,
         webhook_secret: str | None = None,
-        host: str = "127.0.0.1",
-        port: int = 3980,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
         client: BotAPIClient | None = None,
         max_pending_events: int = 64,
         shutdown_timeout: float = 20,
@@ -144,21 +169,21 @@ class Telegram:
 
     @classmethod
     def from_env(cls) -> Telegram:
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        token = os.getenv(ENV_BOT_TOKEN)
         if not token:
-            raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
-        webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL") or None
-        webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET") or None
+            raise RuntimeError(f"{ENV_BOT_TOKEN} is required")
+        webhook_url = os.getenv(ENV_WEBHOOK_URL) or None
+        webhook_secret = os.getenv(ENV_WEBHOOK_SECRET) or None
         if (webhook_url is None) != (webhook_secret is None):
             raise RuntimeError(
-                "TELEGRAM_WEBHOOK_URL and TELEGRAM_WEBHOOK_SECRET are required together"
+                f"{ENV_WEBHOOK_URL} and {ENV_WEBHOOK_SECRET} are required together"
             )
         return cls(
             bot_token=token,
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
-            host=os.getenv("TELEGRAM_HOST", "127.0.0.1"),
-            port=int(os.getenv("TELEGRAM_PORT", "3980")),
+            host=os.getenv(ENV_HOST, DEFAULT_HOST),
+            port=int(os.getenv(ENV_PORT, str(DEFAULT_PORT))),
         )
 
     def bind(self, receiver: MessageReceiver) -> None:
@@ -209,9 +234,9 @@ class Telegram:
                     finally:
                         await self._client.close()
 
-    async def _identify(self) -> None:
+    async def _load_bot_identity(self) -> None:
         try:
-            me = await self._client.call("getMe")
+            me = await self._client.call(METHOD_GET_ME)
         except TelegramError as error:
             if error.is_transient:
                 raise
@@ -228,9 +253,9 @@ class Telegram:
         self._username = username
 
     async def _serve(self) -> None:
-        await self._identify()
+        await self._load_bot_identity()
         if self._webhook_url is None:
-            await self._client.call("deleteWebhook", {"drop_pending_updates": False})
+            await self._client.call(METHOD_DELETE_WEBHOOK, {"drop_pending_updates": False})
             await self._poll()
         else:
             await self._serve_webhook()
@@ -245,28 +270,28 @@ class Telegram:
                 payload["offset"] = self._offset
             try:
                 updates = await self._client.call(
-                    "getUpdates", payload, request_timeout=POLL_TIMEOUT + POLL_HTTP_MARGIN
+                    METHOD_GET_UPDATES, payload, request_timeout=POLL_REQUEST_TIMEOUT
                 )
             except TelegramError as error:
                 if not error.is_transient:
                     raise
-                delay = retry_delay(attempt, error.retry_after)
+                delay = retry_delay(attempt=attempt, retry_after=error.retry_after)
                 logger.warning("Telegram polling failed (%s); retrying in %.1fs", error, delay)
                 attempt += 1
                 await asyncio.sleep(delay)
                 continue
             attempt = 0
             self._confirmed_offset = self._offset
-            if not self._admit(updates if isinstance(updates, list) else []):
+            if not self._has_admitted_all(updates if isinstance(updates, list) else []):
                 await asyncio.sleep(BUSY_DELAY)
 
-    def _admit(self, updates: list) -> bool:
+    def _has_admitted_all(self, updates: list) -> bool:
         for update in updates:
             update_id = update.get("update_id") if isinstance(update, dict) else None
             if not isinstance(update_id, int):
                 continue
             message = self._normalize(update)
-            if message is not None and not self._submit(message):
+            if message is not None and not self._has_submitted(message):
                 return False
             self._offset = update_id + 1
         return True
@@ -275,10 +300,10 @@ class Telegram:
         assert self._username is not None
         return normalize(update, bot_id=self._bot_id, bot_username=self._username)
 
-    def _submit(self, message: Message) -> bool:
+    def _has_submitted(self, message: Message) -> bool:
         if not self._delivery.submit(self, message):
             return False
-        callback_id = message.metadata.get("callback_query_id")
+        callback_id = message.metadata.get(METADATA_CALLBACK_QUERY_ID)
         if isinstance(callback_id, str):
             task = asyncio.create_task(self._answer_callback(callback_id))
             self._answers.add(task)
@@ -288,9 +313,9 @@ class Telegram:
     async def _answer_callback(self, callback_id: str) -> None:
         try:
             await self._client.call(
-                "answerCallbackQuery",
+                METHOD_ANSWER_CALLBACK_QUERY,
                 {"callback_query_id": callback_id},
-                request_timeout=ANSWER_TIMEOUT,
+                request_timeout=CALLBACK_ANSWER_TIMEOUT,
             )
         except Exception as error:
             logger.warning("Telegram callback answer failed (%s)", error)
@@ -301,9 +326,9 @@ class Telegram:
             return
         try:
             await self._client.call(
-                "getUpdates",
+                METHOD_GET_UPDATES,
                 {"offset": self._offset, "limit": 1, "timeout": 0},
-                request_timeout=CONFIRM_TIMEOUT,
+                request_timeout=OFFSET_CONFIRM_TIMEOUT,
             )
         except TelegramError as error:
             logger.warning("Telegram offset confirmation failed (%s)", error)
@@ -314,7 +339,7 @@ class Telegram:
         await web.TCPSite(self._runner, self._host, self._port).start()
         # Listen first: Telegram starts sending as soon as setWebhook succeeds.
         await self._client.call(
-            "setWebhook",
+            METHOD_SET_WEBHOOK,
             {
                 "url": self._webhook_url,
                 "secret_token": self._webhook_secret,
@@ -325,8 +350,8 @@ class Telegram:
 
     async def _receive(self, request: web.Request) -> web.Response:
         assert self._webhook_secret is not None
-        supplied = request.headers.get(SECRET_HEADER, "")
-        if not hmac.compare_digest(supplied.encode(), self._webhook_secret.encode()):
+        supplied_secret = request.headers.get(SECRET_HEADER, "")
+        if not hmac.compare_digest(supplied_secret.encode(), self._webhook_secret.encode()):
             raise web.HTTPUnauthorized(text="Invalid webhook secret")
         try:
             update = json.loads(await request.read())
@@ -338,30 +363,33 @@ class Telegram:
             raise web.HTTPServiceUnavailable(text="Telegram receiver is closed")
         if self._username is None:
             try:
-                await self._identify()
+                await self._load_bot_identity()
             except Exception as error:
                 logger.warning("Telegram bot identity unavailable (%s)", error)
                 raise web.HTTPServiceUnavailable(text="Telegram receiver is starting") from None
         message = self._normalize(update)
-        if message is not None and not self._submit(message):
+        if message is not None and not self._has_submitted(message):
             raise web.HTTPServiceUnavailable(text="Telegram receiver is busy")
         return web.Response(text="OK")
 
     def _destination(self, source: Message) -> _Destination:
-        data = source.metadata
-        chat_id, message_id = data.get("chat_id"), data.get("message_id")
-        thread = data.get("message_thread_id")
+        metadata = source.metadata
+        chat_id, message_id = metadata.get(METADATA_CHAT_ID), metadata.get(METADATA_MESSAGE_ID)
+        thread_id = metadata.get(METADATA_THREAD_ID)
         if (
             source.channel != self.name
-            or data.get("bot_id") != self._bot_id
+            or metadata.get(METADATA_BOT_ID) != self._bot_id
             or not isinstance(chat_id, int)
             or not isinstance(message_id, int)
             or isinstance(chat_id, bool)
             or isinstance(message_id, bool)
-            or (thread is not None and (not isinstance(thread, int) or isinstance(thread, bool)))
+            or (
+                thread_id is not None
+                and (not isinstance(thread_id, int) or isinstance(thread_id, bool))
+            )
         ):
             raise ValueError("Source does not belong to this Telegram adapter")
-        return _Destination(chat_id, message_id, thread)
+        return _Destination(chat_id=chat_id, message_id=message_id, thread_id=thread_id)
 
     async def _send(
         self, *, source: Message, destination: _Destination, payload: dict, text: str,
@@ -376,7 +404,7 @@ class Telegram:
         }
         if destination.thread_id is not None:
             payload["message_thread_id"] = destination.thread_id
-        result = await self._client.call("sendMessage", payload)
+        result = await self._client.call(METHOD_SEND_MESSAGE, payload)
         sent = result.get("message_id") if isinstance(result, dict) else None
         if not isinstance(sent, int) or isinstance(sent, bool) or sent <= 0:
             raise RuntimeError("Telegram did not return a message receipt")
@@ -385,14 +413,14 @@ class Telegram:
             if key not in CALLBACK_ONLY_METADATA
         }
         return Message(
-            id=f"telegram:{self._bot_id}:{destination.chat_id}:{sent}",
+            id=f"{TELEGRAM_CHANNEL}:{self._bot_id}:{destination.chat_id}:{sent}",
             conversation_id=source.conversation_id,
             channel=self.name,
             sender=Sender(id=str(self._bot_id), display_name=self._first_name),
             text=text,
             role="assistant",
             thread_id=source.thread_id,
-            metadata=MappingProxyType({**metadata, "message_id": sent}),
+            metadata=MappingProxyType({**metadata, METADATA_MESSAGE_ID: sent}),
         )
 
     async def reply(self, source: Message, content: str) -> Message:
@@ -420,10 +448,12 @@ class Telegram:
             previous.cancel()
         if not status:
             return True
-        payload: dict[str, object] = {"chat_id": destination.chat_id, "action": "typing"}
+        payload: dict[str, object] = {
+            "chat_id": destination.chat_id, "action": CHAT_ACTION_TYPING,
+        }
         if destination.thread_id is not None:
             payload["message_thread_id"] = destination.thread_id
-        await self._client.call("sendChatAction", payload)
+        await self._client.call(METHOD_SEND_CHAT_ACTION, payload)
         # A concurrent call for the same chat may have stored a task while this one awaited.
         if previous := self._typing.pop(key, None):
             previous.cancel()
@@ -438,7 +468,7 @@ class Telegram:
                 await asyncio.sleep(TYPING_INTERVAL)
                 with contextlib.suppress(Exception):
                     await self._client.call(
-                        "sendChatAction", payload, request_timeout=TYPING_INTERVAL,
+                        METHOD_SEND_CHAT_ACTION, payload, request_timeout=TYPING_INTERVAL,
                     )
         finally:
             if self._typing.get(key) is asyncio.current_task():
@@ -467,7 +497,7 @@ class Telegram:
             if file.title:
                 fields["caption"] = truncate_caption(file.title)
             result = await self._client.upload(
-                method="sendDocument",
+                method=METHOD_SEND_DOCUMENT,
                 fields=fields,
                 file_field="document",
                 filename=file.filename,
@@ -490,12 +520,12 @@ class Telegram:
             raise ValueError("Attachment does not belong to the source message")
         if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
             raise ValueError("Expected a positive attachment byte limit")
-        path, content = await self._client.download_file(attachment.id, max_bytes=max_bytes)
-        if not content:
+        file = await self._client.download_file(attachment.id, max_bytes=max_bytes)
+        if not file.content:
             raise ValueError("This Telegram file was empty. Send the attachment again.")
         return DownloadedFile(
             id=attachment.id,
-            name=attachment.name or posixpath.basename(path) or "attachment",
-            content=content,
+            name=attachment.name or posixpath.basename(file.path) or "attachment",
+            content=file.content,
             media_type=attachment.media_type,
         )

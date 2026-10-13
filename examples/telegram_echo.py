@@ -1,5 +1,3 @@
-"""Echo messages after completing docs/telegram.md; no model API key required."""
-
 import asyncio
 import logging
 

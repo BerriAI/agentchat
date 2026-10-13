@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote
 
 import aiohttp
@@ -10,7 +10,22 @@ API_ROOT = "https://api.telegram.org"
 REQUEST_TIMEOUT = 30
 UPLOAD_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 60
-DOWNLOAD_CHUNK = 64 * 1024
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
+
+METHOD_GET_ME = "getMe"
+METHOD_GET_UPDATES = "getUpdates"
+METHOD_DELETE_WEBHOOK = "deleteWebhook"
+METHOD_SET_WEBHOOK = "setWebhook"
+METHOD_ANSWER_CALLBACK_QUERY = "answerCallbackQuery"
+METHOD_SEND_MESSAGE = "sendMessage"
+METHOD_SEND_CHAT_ACTION = "sendChatAction"
+METHOD_SEND_DOCUMENT = "sendDocument"
+METHOD_GET_FILE = "getFile"
+
+
+class TelegramFile(NamedTuple):
+    path: str
+    content: bytes
 
 
 def _download_limit_error(max_bytes: int) -> ValueError:
@@ -53,8 +68,6 @@ def _unwrap_result(method: str, status: int, body: object) -> Any:
 
 
 class TelegramBotClient:
-    """One-attempt Bot API calls; messages never carry the token-bearing URL."""
-
     def __init__(self, token: str, *, api_root: str = API_ROOT) -> None:
         self._token = token
         self._api_root = api_root.rstrip("/")
@@ -104,8 +117,8 @@ class TelegramBotClient:
         )
         return await self._post(method, request_timeout=UPLOAD_TIMEOUT, data=form)
 
-    async def download_file(self, file_id: str, *, max_bytes: int) -> tuple[str, bytes]:
-        file = await self.call("getFile", {"file_id": file_id})
+    async def download_file(self, file_id: str, *, max_bytes: int) -> TelegramFile:
+        file = await self.call(METHOD_GET_FILE, {"file_id": file_id})
         file = file if isinstance(file, dict) else {}
         size, path = file.get("file_size"), file.get("file_path")
         if isinstance(size, int) and size > max_bytes:
@@ -127,14 +140,14 @@ class TelegramBotClient:
                 if response.status != 200:
                     raise RuntimeError(f"Telegram file download failed (HTTP {response.status})")
                 chunks, received = [], 0
-                async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK):
+                async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK_BYTES):
                     received += len(chunk)
                     if received > max_bytes:
                         raise _download_limit_error(max_bytes)
                     chunks.append(chunk)
         except (aiohttp.ClientError, TimeoutError):
             raise TelegramError("Telegram file download failed") from None
-        return path, b"".join(chunks)
+        return TelegramFile(path, b"".join(chunks))
 
     @property
     def is_closed(self) -> bool:
