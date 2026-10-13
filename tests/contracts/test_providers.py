@@ -6,25 +6,35 @@ import pytest
 from aiohttp import web
 
 from agentchat import AgentChat, RichReply, UploadFile
+from agentchat.channels.base import (
+    FileUploadChannel,
+    MirroringChannel,
+    RichReplyChannel,
+    StatusChannel,
+)
 from agentchat.channels.discord import Discord
 from agentchat.channels.discord.events import normalize as discord_message
 from agentchat.channels.imessage import IMessage
 from agentchat.channels.imessage.events import normalize as imessage_message
 from agentchat.channels.teams import Teams
 from agentchat.channels.teams.events import normalize as teams_message
+from agentchat.channels.telegram import Telegram
+from agentchat.channels.telegram.events import normalize as telegram_message
 from agentchat.channels.whatsapp import WhatsApp
 from agentchat.channels.whatsapp.events import normalize as whatsapp_messages
 from tests.support.discord import DiscordClient, discord_event
 from tests.support.imessage import BubblesClient, SocketClient, imessage_event
 from tests.support.receipts import Receipt
 from tests.support.teams import APP_ID, TENANT_ID, teams_adapter, teams_event
+from tests.support.telegram import TelegramClient, telegram_update
 from tests.support.whatsapp import WhatsAppSession, whatsapp_event
 
 
-@pytest.fixture(params=["discord", "teams", "imessage", "whatsapp"])
+@pytest.fixture(params=["discord", "teams", "imessage", "whatsapp", "telegram"])
 def harness(request):
-    receipt = Receipt(101 if request.param == "discord" else "sent")
+    receipt = Receipt(101 if request.param in ("discord", "telegram") else "sent")
     options = {"max_pending_events": 2, "shutdown_timeout": 0.01}
+    capabilities = set()
     if request.param == "discord":
         client = DiscordClient(receipt)
         channel = Discord(bot_token="fake", client=client, send_client=client, **options)
@@ -50,6 +60,10 @@ def harness(request):
             **options,
         )
         source = imessage_message(imessage_event(), instance_id="test")
+    elif request.param == "telegram":
+        channel = Telegram(bot_token="99:fake", client=TelegramClient(receipt), **options)
+        source = telegram_message(telegram_update(), bot_id=99, bot_username="agentchat_bot")
+        capabilities = {StatusChannel, RichReplyChannel, FileUploadChannel}
     else:
         channel = WhatsApp(
             phone_number_id="123",
@@ -61,7 +75,9 @@ def harness(request):
         )
         channel._session = WhatsAppSession(receipt)
         source = whatsapp_messages(whatsapp_event(), phone_number_id="123")[0]
-    return SimpleNamespace(channel=channel, source=source, receipt=receipt)
+    return SimpleNamespace(
+        channel=channel, source=source, receipt=receipt, capabilities=capabilities,
+    )
 
 
 @pytest.mark.asyncio
@@ -124,12 +140,19 @@ async def test_rejects_wrong_provider_and_empty_text_before_send(harness):
 @pytest.mark.asyncio
 async def test_optional_capability_fallbacks(harness):
     app = AgentChat(channels=[harness.channel])
+    for protocol in (StatusChannel, RichReplyChannel, FileUploadChannel, MirroringChannel):
+        assert isinstance(harness.channel, protocol) == (protocol in harness.capabilities)
     try:
-        assert await app.set_status(harness.channel, harness.source, "working") is False
-        with pytest.raises(TypeError, match="rich replies"):
-            await app.reply_rich(harness.channel, harness.source, RichReply(text="answer"))
-        with pytest.raises(TypeError, match="file uploads"):
-            await app.upload_files(harness.channel, harness.source, [UploadFile("a.txt", b"a")])
+        if StatusChannel not in harness.capabilities:
+            assert await app.set_status(harness.channel, harness.source, "working") is False
+        if RichReplyChannel not in harness.capabilities:
+            with pytest.raises(TypeError, match="rich replies"):
+                await app.reply_rich(harness.channel, harness.source, RichReply(text="answer"))
+        if FileUploadChannel not in harness.capabilities:
+            with pytest.raises(TypeError, match="file uploads"):
+                await app.upload_files(
+                    harness.channel, harness.source, [UploadFile("a.txt", b"a")],
+                )
         with pytest.raises(TypeError, match="mirroring"):
             await app.mirror(harness.channel, harness.source, harness.source)
     finally:
@@ -201,7 +224,7 @@ async def test_run_and_close_release_resources(harness, monkeypatch):
     running = asyncio.create_task(harness.channel.run())
     try:
         async with asyncio.timeout(2):
-            if harness.channel.name == "discord":
+            if harness.channel.name in ("discord", "telegram"):
                 await harness.channel._client.started.wait()
             elif harness.channel.name == "imessage":
                 await harness.channel._socket.started.wait()
