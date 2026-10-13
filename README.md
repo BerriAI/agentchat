@@ -1,5 +1,10 @@
 # agentchat
 
+AgentChat has a shared Rust core with compatible Python, Node.js/TypeScript and
+Rust interfaces. The native Node/Rust channel currently targets Slack, including
+the [Claude Agent SDK example](examples/node/README.md). Existing Python channel
+integrations remain supported. See the [migration and support guide](docs/rust-core.md).
+
 a minimal sdk to connect your agents to slack, teams, imessage, whatsapp, telegram.
 
 use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents) and instantly connect it to all supported channels.
@@ -9,6 +14,9 @@ use any SDK (Claude Agents, OpenAI Agents, Langchain DeepAgents, Pydantic Agents
 ## Quickstart
 
 ### 1. Install
+
+Installing from this checkout requires a Rust toolchain. Published binary wheels
+do not require a compiler.
 ```sh
 git clone https://github.com/BerriAI/agentchat.git
 cd agentchat

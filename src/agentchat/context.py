@@ -43,6 +43,11 @@ class MessageContext:
         if self.message.thread_id is not None and isinstance(self._channel, ThreadHistoryChannel):
             previous = await self._channel.thread_history(self.message, limit=limit)
             messages = (*previous, self.message)
+            if self._app.backend == "rust":
+                from agentchat._native import thread_history_indices
+
+                indices = thread_history_indices(len(messages), limit)
+                return tuple(messages[index] for index in indices)
             return messages if len(messages) <= limit else messages[:1] + messages[-(limit - 1):]
         return await self.conversation.history(limit=limit)
 

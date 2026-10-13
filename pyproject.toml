@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=75"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [project]
 name = "agentchat"
@@ -37,8 +37,12 @@ dev = [
     "ruff>=0.14,<1",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.maturin]
+manifest-path = "bindings/python/Cargo.toml"
+python-source = "src"
+module-name = "agentchat._native"
+features = ["pyo3/extension-module"]
+include = ["docs/**/*.md", "examples/**/*.py", "tests/**/*.py", "conformance/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

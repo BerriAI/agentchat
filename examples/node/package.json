@@ -1,0 +1,15 @@
+{
+  "name": "agentchat-claude-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx claude-agent.ts",
+    "test": "tsx --test *.test.ts *.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.0",
+    "@berriai/agentchat": "file:../../packages/node"
+  },
+  "devDependencies": { "tsx": "^4.20.0", "typescript": "^5.9.0", "@types/node": "^22.0.0" }
+}
