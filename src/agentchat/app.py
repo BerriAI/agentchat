@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
+from agentchat._backend import Backend, resolve_backend
 from agentchat.activity import WorkingStatus
 from agentchat.channels.base import (
     Channel,
@@ -33,14 +34,27 @@ class AgentChat:
         *,
         channels: Sequence[Channel],
         state: State | None = None,
+        backend: Backend | None = None,
     ) -> None:
         if not channels:
             raise ValueError("AgentChat requires at least one channel")
         self.channels = tuple(channels)
-        self.state = state or MemoryState()
+        self._backend = resolve_backend(backend)
+        self.state = state or MemoryState(backend=self._backend)
+        if self.backend == "rust":
+            # Fail at construction if installation is incomplete, before binding
+            # channels or admitting work. Never replay a native failure in Python.
+            from agentchat._runtime import receive
+
+            self._native_receive = receive
         self._handler: MessageHandler | None = None
         for channel in self.channels:
             channel.bind(self._receive)
+
+    @property
+    def backend(self) -> str:
+        """The backend selected for this instance; it cannot change during a turn."""
+        return self._backend
 
     def on_message(self, handler: MessageHandler) -> MessageHandler:
         if self._handler is not None:
@@ -123,6 +137,9 @@ class AgentChat:
     async def _receive(self, channel: Channel, message: Message) -> None:
         if self._handler is None:
             raise RuntimeError("Register a message handler with @app.on_message")
+        if self.backend == "rust":
+            await self._native_receive(self, channel, message, self._handler)
+            return
         if not await self.state.claim(message.id):
             return
         async with self.state.lock(message.conversation_id):

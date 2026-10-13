@@ -5,6 +5,11 @@ platform implements the `Channel` protocol and emits the same `Message` values.
 The application passes channel instances directly to `AgentChat`; there is no
 provider registry or framework superclass.
 
+The shared Rust core now owns turn transitions and default in-memory storage.
+Python keeps its public models, host callbacks and existing provider adapters;
+Node and Rust use a native Slack adapter. See the [migration and support
+guide](rust-core.md) for the current language/provider matrix.
+
 ```text
 provider event
     │
@@ -28,18 +33,28 @@ AgentChat             append the returned reply to local state
 
 | Module | Owns |
 | --- | --- |
-| `app.py` | Channel lifecycle, deduplication, ordering, dispatch and local-history writes |
+| `crates/agentchat-core` | Typed native models, turn transitions, state contracts, in-memory claims/history and native context operations |
+| `app.py`, `_runtime.py` | Python channel lifecycle and execution of core effects on the caller's asyncio task; selectable legacy dispatcher |
+| `bindings/python` | Python object ownership and conversion to core operations |
+| `bindings/node`, `packages/node` | Node callback/lifecycle bridge and typed JavaScript interface |
+| `crates/agentchat-slack` | Native Slack routing, normalization, transport, capabilities and confirmed receipts |
 | `context.py` | Handler-facing `MessageContext` and `Conversation` operations |
 | `models.py` | Shared message, sender, attachment and reply value objects |
 | `activity.py` | Refreshing and clearing in-process working indicators |
 | `channels/base.py` | Required channel operations and optional capability protocols |
 | `channels/<provider>/` | Provider SDKs, credentials, payloads, connection resources and delivery |
 | `integrations/` | Optional helpers for agent frameworks |
-| `state/` | Claiming message IDs, conversation locks, local history and storage |
+| `state/` | Python state protocol and asyncio conversation locks; default storage delegates to Rust |
 
 Core modules depend on shared models and channel contracts, never a concrete
 provider or agent framework. Adapters do not import each other. Framework helpers
 consume normalized messages and do not own the channel lifecycle.
+
+The Rust `Turn` engine emits typed effects. Python executes those effects inline
+against the existing `Channel` and `State` protocols, preserving custom async
+context managers and opaque message metadata. The native runtime executes the
+same effects for Rust and Node. Bindings do not implement a separate turn
+algorithm or parse provider routes.
 
 The core records an adapter's returned reply and does not independently validate
 provider receipts. Adapters own delivery confirmation and error propagation.
@@ -53,7 +68,7 @@ Applications own sender authorization, agent execution, durable work and deliver
 recovery. Direct channel binding is also supported when an application already
 owns deduplication, ordering and history; see the [Slack guide](slack.md#using-an-existing-agent-runner).
 
-## Provider containment
+## Python provider containment
 
 The shared channel namespace contains only adapter contracts. A provider owns
 its implementations, exports and optional dependency loading:
@@ -84,7 +99,7 @@ private helper `agentchat/_delivery.py` shares bounded background dispatch and
 cleanup. Provider authentication, acknowledgement, and overflow policy stay in
 each adapter. See the [provider guides](providers.md) for supported operations.
 
-## Composition
+## Python composition
 
 The generic adapter boundary remains `Channel`. Within Slack, replace event
 delivery independently of message behavior:

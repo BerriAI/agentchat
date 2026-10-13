@@ -1,0 +1,529 @@
+[
+  {
+    "name": "channel mention",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "direct message",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "message",
+        "user": "U1",
+        "channel": "D1",
+        "ts": "1730000000.000001",
+        "text": "hello",
+        "channel_type": "im"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:D1:1730000000.000001",
+      "conversation_id": "slack:T1:D1",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "D1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "im",
+        "reply_thread_timestamp": null,
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": null,
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "threaded direct message",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "message",
+        "user": "U1",
+        "channel": "D1",
+        "ts": "1730000000.000001",
+        "text": "hello",
+        "channel_type": "im",
+        "thread_ts": "1729999999.123456"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:D1:1730000000.000001",
+      "conversation_id": "slack:T1:D1",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "D1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "im",
+        "reply_thread_timestamp": "1729999999.123456",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1729999999.123456",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "followed thread candidate",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "message",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "continue",
+        "channel_type": "channel",
+        "thread_ts": "1729999999.123456"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1729999999.123456",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "continue",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "1729999999.123456",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": true
+      },
+      "thread_id": "1729999999.123456",
+      "addressed": false,
+      "attachments": []
+    }
+  },
+  {
+    "name": "group explicit mention",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "message",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "hi <@UBOT> again",
+        "channel_type": "group"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hi  again",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "group",
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "workspace isolation",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T2",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "bot echo ignored",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello",
+        "bot_id": "B1"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "own message ignored",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "UBOT",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "edit ignored",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello",
+        "subtype": "message_changed"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "malformed thread ignored",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello",
+        "thread_ts": false
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "unaddressed root ignored",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "message",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "hello",
+        "channel_type": "channel"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "attachment only and sanitized names",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT>",
+        "subtype": "file_share",
+        "files": [
+          {
+            "id": "F123",
+            "name": "../one\u0000.txt",
+            "mimetype": "text/plain",
+            "size": true
+          },
+          {
+            "id": "F123",
+            "name": "duplicate"
+          },
+          {
+            "id": "bad",
+            "name": "ignored"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": [
+        {
+          "id": "F123",
+          "name": "one.txt",
+          "media_type": "text/plain",
+          "size": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "null channel type preserved",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hello",
+        "channel_type": null
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": null,
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "python whitespace normalization",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "\u001c<@UBOT> hello\u001f"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "timestamps stay lossless",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "99999999999999999.000001",
+        "text": "<@UBOT> hello"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:99999999999999999.000001",
+      "conversation_id": "slack:T1:C1:99999999999999999.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hello",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "99999999999999999.000001",
+        "message_timestamp": "99999999999999999.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "99999999999999999.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  },
+  {
+    "name": "unicode text",
+    "workspace_id": "T1",
+    "bot_user_id": "UBOT",
+    "payload": {
+      "team_id": "T1",
+      "event_id": "Ev1",
+      "event": {
+        "type": "app_mention",
+        "user": "U1",
+        "channel": "C1",
+        "ts": "1730000000.000001",
+        "text": "<@UBOT> hi \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66\n\u05e9\u05dc\u05d5\u05dd"
+      }
+    },
+    "expected": {
+      "id": "slack:T1:C1:1730000000.000001",
+      "conversation_id": "slack:T1:C1:1730000000.000001",
+      "channel": "slack",
+      "sender": {
+        "id": "U1",
+        "display_name": null
+      },
+      "text": "hi \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66\n\u05e9\u05dc\u05d5\u05dd",
+      "role": "user",
+      "metadata": {
+        "channel_id": "C1",
+        "team_id": "T1",
+        "event_id": "Ev1",
+        "channel_type": "channel",
+        "reply_thread_timestamp": "1730000000.000001",
+        "message_timestamp": "1730000000.000001",
+        "requires_subscription": false
+      },
+      "thread_id": "1730000000.000001",
+      "addressed": true,
+      "attachments": []
+    }
+  }
+]

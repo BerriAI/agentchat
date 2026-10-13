@@ -1,0 +1,30 @@
+{
+  "name": "@berriai/agentchat",
+  "version": "0.1.0-alpha.1",
+  "description": "Connect Node.js agents to chat channels through the shared AgentChat Rust core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "native", "README.md"],
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/BerriAI/agentchat.git", "directory": "packages/node" },
+  "scripts": {
+    "build:native": "napi build --platform --release --manifest-path ../../bindings/node/Cargo.toml --output-dir native --js index.cjs",
+    "build": "npm run build:native && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node scripts/package-smoke.mjs"
+  },
+  "napi": {
+    "binaryName": "agentchat",
+    "targets": ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "ws": "^8.18.0"
+  }
+}
