@@ -5,10 +5,9 @@ platform implements the `Channel` protocol and emits the same `Message` values.
 The application passes channel instances directly to `AgentChat`; there is no
 provider registry or framework superclass.
 
-The shared Rust core now owns turn transitions and default in-memory storage.
-Python keeps its public models, host callbacks and existing provider adapters;
-Node and Rust use a native Slack adapter. See the [migration and support
-guide](rust-core.md) for the current language/provider matrix.
+Rust owns the runtime, provider policy, transport orchestration and lifecycle.
+Python supplies compatible declarations and native exports; JavaScript supplies
+its typed interface and callback glue. See the [support guide](rust-core.md).
 
 ```text
 provider event
@@ -33,24 +32,21 @@ AgentChat             append the returned reply to local state
 
 | Module | Owns |
 | --- | --- |
-| `crates/agentchat-core` | Typed native models, turn transitions, state contracts, in-memory claims/history and native context operations |
-| `app.py`, `_runtime.py` | Python channel lifecycle and execution of core effects on the caller's asyncio task; selectable legacy dispatcher |
-| `bindings/python` | Python object ownership and conversion to core operations |
-| `bindings/node`, `packages/node` | Node callback/lifecycle bridge and typed JavaScript interface |
-| `crates/agentchat-slack` | Native Slack routing, normalization, transport, capabilities and confirmed receipts |
-| `context.py` | Handler-facing `MessageContext` and `Conversation` operations |
-| `models.py` | Shared message, sender, attachment and reply value objects |
-| `activity.py` | Refreshing and clearing in-process working indicators |
-| `channels/base.py` | Required channel operations and optional capability protocols |
-| `channels/<provider>/` | Provider SDKs, credentials, payloads, connection resources and delivery |
-| `integrations/` | Optional helpers for agent frameworks |
-| `state/` | Python state protocol and asyncio conversation locks; default storage delegates to Rust |
+| `src/agentchat-core` | Typed models, turn transitions, state contracts, claims/history, context operations |
+| `src/agentchat` | Public Rust interface |
+| `src/agentchat-slack` | Shared Slack policy, rendering, history, files, native HTTP and Socket Mode transport |
+| `src/agentchat-providers` | Telegram, WhatsApp, Discord, iMessage and Teams normalization, routing and validation |
+| `src/bindings/python` | Native Python classes, foreign object ownership, original-task async execution and SDK I/O adapters |
+| `src/bindings/node` | Node native addon, callback and lifecycle bridge |
+| `python/agentchat` | Compatible imports, dataclasses, protocols, optional SDK imports and native aliases |
+| `packages/node` | JavaScript/TypeScript public interface |
+
 
 Core modules depend on shared models and channel contracts, never a concrete
 provider or agent framework. Adapters do not import each other. Framework helpers
 consume normalized messages and do not own the channel lifecycle.
 
-The Rust `Turn` engine emits typed effects. Python executes those effects inline
+The Rust `Turn` engine emits typed effects. The native Python binding executes them inline
 against the existing `Channel` and `State` protocols, preserving custom async
 context managers and opaque message metadata. The native runtime executes the
 same effects for Rust and Node. Bindings do not implement a separate turn
@@ -68,36 +64,19 @@ Applications own sender authorization, agent execution, durable work and deliver
 recovery. Direct channel binding is also supported when an application already
 owns deduplication, ordering and history; see the [Slack guide](slack.md#using-an-existing-agent-runner).
 
-## Python provider containment
+## Python interface containment
 
-The shared channel namespace contains only adapter contracts. A provider owns
-its implementations, exports and optional dependency loading:
+Existing module paths stay available below `python/agentchat/channels/<provider>`.
+They expose native functions and classes and keep provider SDK imports optional.
+No routing, rendering, dispatch, file-transfer algorithm, lifecycle implementation,
+or fallback runtime lives in these Python files. Dataclasses and protocols remain
+Python declarations to preserve their existing identity and structural API.
 
-```text
-channels/
-├── __init__.py        shared contract exports only
-├── base.py            Channel and optional capability protocols
-└── slack/
-    ├── __init__.py    lazy public Slack exports
-    ├── adapter.py     shared Slack message behavior and Web API operations
-    ├── transport.py   SlackEventSource and its event receiver contract
-    ├── socket_mode.py Socket Mode connection, acknowledgements and shutdown
-    ├── events.py      pure event/attachment normalization
-    ├── rendering.py   pure text and rich-reply formatting
-    ├── files.py       uploads and bounded downloads
-    └── mirroring.py   external-input rendering and sender/role recovery
-```
-
-`base.py` is shared because it defines what any messaging adapter must implement.
-Every Slack-specific module lives below `slack/`. There are no sibling Slack
-compatibility modules or provider aliases in the shared namespace.
-
-Discord, Teams, iMessage, WhatsApp, and Telegram use the same package boundary with
-`adapter.py`, normalization in `events.py`, and text validation in `rendering.py`.
-Discord, BlueBubbles, and Telegram have small REST transport modules too. The provider-neutral
-private helper `agentchat/_delivery.py` shares bounded background dispatch and
-cleanup. Provider authentication, acknowledgement, and overflow policy stay in
-each adapter. See the [provider guides](providers.md) for supported operations.
+Provider policy belongs to the Rust provider crate. A Python SDK adapter converts
+foreign values, invokes that policy and drives the existing SDK effects through
+the native host coroutine bridge. The bridge awaits callbacks on the caller's
+asyncio task, so task-local locks and context variables remain valid. Native
+Rust and Node Slack use the same provider policies with the Rust HTTP transport.
 
 ## Python composition
 
@@ -116,7 +95,7 @@ application event feed ┘                           │
 starting its source. The source calls the same `handle_event` method for every
 payload, so normalization, subscription filtering, sender identity and replies
 remain shared. `Slack.close()` and `is_connected()` delegate source lifecycle.
-The default Socket Mode implementation owns socket SDK imports, acknowledgement,
+The native Socket Mode implementation owns SDK invocation, acknowledgement,
 bounded event tasks and graceful shutdown.
 
 Supply exactly one of `app_token` (the Socket Mode convenience) or `event_source`

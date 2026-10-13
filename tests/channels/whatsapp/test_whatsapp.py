@@ -200,3 +200,23 @@ async def test_shutdown_drains_handler_before_first_http_session_is_created(monk
     await channel.close()
     assert len(receipt.calls) == 1
     assert session.closed
+
+
+@pytest.mark.asyncio
+async def test_native_reply_preserves_opaque_host_metadata(monkeypatch):
+    from dataclasses import replace
+
+    marker = object()
+    source = normalize(whatsapp_event(), phone_number_id="123")[0]
+    source = replace(source, metadata={**source.metadata, "host_marker": marker})
+    session = WhatsAppSession(Receipt("sent"))
+    monkeypatch.setattr(
+        "agentchat.channels.whatsapp.adapter.aiohttp.ClientSession", lambda **kw: session,
+    )
+    channel = make_channel()
+    try:
+        reply = await channel.reply(source, "native receipt")
+        assert reply.metadata["host_marker"] is marker
+        assert reply.metadata["message_id"] == "sent"
+    finally:
+        await channel.close()

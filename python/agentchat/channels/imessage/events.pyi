@@ -1,0 +1,3 @@
+from agentchat.models import Message
+
+def normalize(event: object, *, instance_id: str) -> Message | None: ...

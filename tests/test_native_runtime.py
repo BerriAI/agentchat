@@ -8,15 +8,15 @@ from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
-from agentchat._native import NativeTurn, core_version
 
 from agentchat import AgentChat
+from agentchat._native import NativeTurn, core_version
 from agentchat.state import MemoryState
 from tests.support.channels import FakeChannel, incoming
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_custom_state_scope_and_nested_calls_stay_in_the_original_task(backend):
     scope = contextvars.ContextVar("conversation_scope", default=None)
     caller = asyncio.current_task()
@@ -65,7 +65,7 @@ async def test_custom_state_scope_and_nested_calls_stay_in_the_original_task(bac
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_handler_failure_preserves_exception_and_claim_without_replay(backend):
     channel = FakeChannel()
     app = AgentChat(channels=[channel], backend=backend)
@@ -89,7 +89,7 @@ async def test_handler_failure_preserves_exception_and_claim_without_replay(back
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_cancelled_turn_releases_custom_lock_and_retains_claim(backend):
     channel = FakeChannel()
     app = AgentChat(channels=[channel], backend=backend)
@@ -114,7 +114,7 @@ async def test_cancelled_turn_releases_custom_lock_and_retains_claim(backend):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_ambiguous_send_is_not_retried_or_recorded(backend):
     sends = 0
 
@@ -148,7 +148,7 @@ def test_native_boundary_rejects_invalid_transition_without_panicking():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_automatic_reply_preserves_application_override(backend):
     calls = []
 
@@ -173,7 +173,9 @@ async def test_automatic_reply_preserves_application_override(backend):
 
 def test_backend_selection_is_explicit_and_immutable(monkeypatch):
     monkeypatch.setenv("AGENTCHAT_BACKEND", "python")
-    assert AgentChat(channels=[FakeChannel()]).backend == "python"
+    assert AgentChat(channels=[FakeChannel()]).backend == "rust"
+    with pytest.raises(ValueError, match="Python implementation has been removed"):
+        AgentChat(channels=[FakeChannel()], backend="python")
     app = AgentChat(channels=[FakeChannel()], backend="rust")
     assert app.backend == "rust"
     with pytest.raises(AttributeError):
@@ -183,7 +185,7 @@ def test_backend_selection_is_explicit_and_immutable(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["rust", "python"])
+@pytest.mark.parametrize("backend", ["rust"])
 async def test_memory_state_keeps_live_views_and_python_slice_behavior(backend):
     state = MemoryState(backend=backend)
     view = state.messages

@@ -299,3 +299,21 @@ async def test_reply_rejects_a_boolean_message_receipt():
             await channel.reply(read(telegram_update()), "answer")
     finally:
         await channel.close()
+
+
+@pytest.mark.asyncio
+async def test_native_reply_preserves_opaque_host_metadata():
+    marker = object()
+    source = read(telegram_update())
+    cycle = {}
+    cycle["self"] = cycle
+    source = replace(source, metadata={**source.metadata, "host_marker": marker, "cycle": cycle})
+    channel = faked()
+    try:
+        reply = await channel.reply(source, "native receipt")
+        assert reply.metadata["host_marker"] is marker
+        assert reply.metadata["cycle"] is cycle
+        assert reply.metadata["cycle"]["self"] is cycle
+        assert reply.metadata["message_id"] == 101
+    finally:
+        await channel.close()

@@ -479,7 +479,7 @@ outcomes are recovered. The included Socket Mode source remains bounded,
 in-process delivery. It owns socket acknowledgements, connection state, pending
 event limits and shutdown independently of Slack's message behavior.
 
-See [the source protocol](../src/agentchat/channels/slack/transport.py) and
+See [the source protocol](../python/agentchat/channels/slack/transport.py) and
 [the injected-source tests](../tests/channels/slack/test_event_source.py) for a
 concrete queue-source composition that reuses the same adapter.
 
