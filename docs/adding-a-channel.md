@@ -1,12 +1,15 @@
 # Adding a channel
 
-A channel is an adapter for a messaging platform. Put its implementation in
-`src/agentchat/channels/<provider>/`, export the adapter from that package, and
-pass an instance to `AgentChat(channels=[...])`. No dispatcher changes or provider
-registration are required.
+A channel is an adapter for a messaging platform. Put portable normalization,
+routing and delivery policy in a Rust provider module under `src/`. Implement its
+transport using the Rust channel traits or a foreign SDK adapter under
+`src/bindings/`. Add only public declarations and native exports below
+`python/agentchat/channels/<provider>/`. Pass an instance to
+`AgentChat(channels=[...])`; no dispatcher changes are required.
 
-CI enforces that `channels/` contains only `__init__.py`, `base.py`, and provider
-packages. Keep provider helpers inside their package; root-level shims fail the test.
+Keep provider semantics in its owning Rust module. A language binding must consume
+that module's typed results without reimplementing parsing, validation or routing.
+Existing applications can still supply custom Python channel implementations.
 
 ## Required contract
 
@@ -26,7 +29,7 @@ This is a structural interface: implementing these operations is sufficient;
 inheriting from `Channel` is unnecessary. `MessageReceiver` is an asynchronous
 callback taking `(channel, message)`. See the minimal fake adapter in
 [`tests/support/channels.py`](../tests/support/channels.py) and the production
-[`Slack` adapter](../src/agentchat/channels/slack/adapter.py) for implementations.
+[`Slack` adapter](../src/bindings/python/src/providers/slack.rs) for implementations.
 
 1. **Bind and run.** Store the receiver, then establish transport resources in
    `run()`. Emit accepted events with `await receiver(self, message)`. Keep SDK
@@ -61,7 +64,7 @@ structurally; no capability registry is needed.
 | `FileDownloadChannel` | `download_attachment()` | Raises `TypeError` |
 | `MirroringChannel` | `mirror()` | Raises `TypeError` |
 
-Read exact signatures in [`channels/base.py`](../src/agentchat/channels/base.py).
+Read exact signatures in [`channels/base.py`](../python/agentchat/channels/base.py).
 Native history returns messages before the current turn; the context appends the
 current message and bounds the result. History errors propagate. Rich content can
 remain provider-specific. Normalize attachment references without downloading
@@ -111,7 +114,7 @@ Keep the generic `Channel` contract focused on normalized messages. If one provi
 supports multiple ways to receive native events, inject its event source into the
 adapter and keep parsing/delivery shared. Slack demonstrates this with
 `SlackEventSource` in `channels/slack/transport.py` and the default `SocketMode`
-implementation in `channels/slack/socket_mode.py`.
+implementation in `src/bindings/python/src/providers/slack_socket.rs`.
 
 A source implements `run(receiver)`, `close()` and `is_connected()`. It owns
 transport resources and must stop intake and clean up when closed or cancelled.

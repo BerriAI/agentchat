@@ -3,7 +3,8 @@
 AgentChat has a shared Rust core with compatible Python, Node.js/TypeScript and
 Rust interfaces. The native Node/Rust channel currently targets Slack, including
 the [Claude Agent SDK example](examples/node/README.md). Existing Python channel
-integrations remain supported. See the [migration and support guide](docs/rust-core.md).
+integrations remain supported through native bindings. Implementation code lives under
+`src/`; `python/agentchat/` contains only the compatible interface. See the [migration and support guide](docs/rust-core.md).
 
 a minimal sdk to connect your agents to slack, teams, imessage, whatsapp, telegram.
 

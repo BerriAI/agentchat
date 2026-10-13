@@ -20,27 +20,33 @@ async def respond(context):
     return context.message.text
 ```
 
-Rust owns turn transitions and the default in-memory claims/history store. The
-Python adapter executes effects on the original asyncio task, including the
-entire scope of a custom `State.lock()` context manager. It does not serialize
-Python messages or arbitrary metadata through JSON. Dataclass identity, custom
-state, custom channels, exceptions, cancellation and application overrides of
-`reply()` are preserved. The native store participates in Python garbage
-collection, including cycles through message metadata.
+All AgentChat runtime and provider implementation code lives in Rust under `src/`.
+The `python/agentchat/` package contains compatible imports, dataclass and protocol
+declarations, optional SDK imports, and direct native exports. There is no Python
+dispatcher, provider implementation, or fallback backend. The former
+`backend="python"` option now raises an explicit error; `backend="rust"` remains
+accepted. `AGENTCHAT_BACKEND` no longer selects an implementation.
 
-Select `AgentChat(..., backend="python")` to use the previous dispatcher and
-memory implementation. `AGENTCHAT_BACKEND=python` changes the default for testing
-or rollback. An explicit constructor option takes precedence. Backend selection
-is immutable for an application instance and failures never replay through the
-other backend. Existing channel objects keep their current Python SDK transport;
-selecting the Rust core does not replace a constructed channel.
+The native Python binding awaits foreign SDK and application callbacks on the
+original asyncio task. This preserves custom state locks, context variables,
+exception identity, cancellation, subclass overrides, and application-owned
+Python objects. Existing injected SDK clients and event sources remain supported.
+Third-party Python SDKs still perform transport I/O where required by the existing
+interface; AgentChat owns their sequencing, routing and lifecycle in Rust.
+
+Native coroutine objects must be awaited, cancelled through their owning task, or
+explicitly closed if abandoned before scheduling. Completion, cancellation and
+`close()` release captured Python objects; closing a suspended coroutine also runs
+its context-manager cleanup. A never-awaited coroutine retained in a cycle through
+its own arguments or opaque application metadata cannot currently be reclaimed by
+Python's cycle collector, because those captures live in a Rust future. Avoid
+storing pending coroutine objects in their own inputs; use an asyncio task for
+scheduled work and await its completion or cancellation.
 
 Installing from a wheel needs no Rust toolchain. Installing this checkout or a
 source distribution builds `agentchat._native` with maturin and requires Rust.
-The Python minimum remains 3.11. Ordinary CPython wheels use `abi3-py311`;
-free-threaded Python and alternative interpreters are not qualified by this
-release. The Python fallback is a runtime rollback option, not a replacement for
-a missing native binary during installation.
+The minimum Python version is 3.11, using `abi3-py311` wheels. Free-threaded Python
+and alternative interpreters are not qualified by this release.
 
 ## Node and Claude Agent SDK
 
@@ -69,8 +75,8 @@ explicitly during application shutdown.
 
 ## Rust interface
 
-`crates/agentchat` is the public Rust facade. Enable its `slack` feature for the
-native provider. `crates/agentchat-core` owns typed models, state contracts,
+`src/agentchat` is the public Rust facade. Enable its `slack` feature for the
+native provider. `src/agentchat-core` owns typed models, state contracts,
 conversation ordering, context operations and the turn engine. Custom channels
 implement the open `Channel` trait; they do not need registration in a closed
 provider enum. Rust applications use their own Tokio runtime.
@@ -85,17 +91,18 @@ integer precision loss.
 
 | Channel | Python interface | Node and Rust interfaces |
 | --- | --- | --- |
-| Slack | Existing compatible Python adapter, shared Rust core | Native Rust adapter |
-| Telegram | Existing compatible Python adapter, shared Rust core | Native port pending |
-| WhatsApp | Existing compatible Python adapter, shared Rust core | Native port pending |
-| Discord | Existing compatible Python adapter, shared Rust core | Native port pending |
-| iMessage | Existing compatible Python adapter, shared Rust core | Native port pending |
-| Teams | Existing compatible Python adapter, shared Rust core | Native port pending |
+| Slack | Rust implementation, compatible Python SDK injection | Native Rust transport |
+| Telegram | Rust implementation, Python SDK/HTTP I/O | Transport binding pending |
+| WhatsApp | Rust implementation, Python HTTP I/O | Transport binding pending |
+| Discord | Rust implementation, Python SDK/HTTP I/O | Transport binding pending |
+| iMessage | Rust implementation, Python SDK/HTTP I/O | Transport binding pending |
+| Teams | Rust implementation, Python SDK I/O | Transport binding pending |
 
-This is the first migration stage: the shared core and Slack path are available
-without rewriting existing Python integrations. Remaining native providers can
-be added behind the same channel contract. Their Python transports remain
-available throughout migration.
+`src/agentchat-providers` owns portable policies for the five non-Slack providers.
+Those policies are available to Rust callers; their complete channel transports
+are currently exposed through the Python interface. Slack's complete transport
+is also available to Node and Rust. Adding another language transport must consume
+the existing Rust policy rather than copy provider rules into a binding.
 
 Claims/history are in-process and unbounded, matching the previous default.
 Claims survive handler failures within that state and disappear on restart.
@@ -111,12 +118,19 @@ Run these checks before proposing a change:
 ```bash
 python -m pip install -e '.[dev]'
 ruff check .
+MYPYPATH=python mypy --ignore-missing-imports --follow-imports silent scripts/python-typing-smoke.py
 python -m pytest
-AGENTCHAT_BACKEND=python python -m pytest
 cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
+
+Public Python modules ship adjacent `.pyi` declarations and a `py.typed` marker.
+The declarations were extracted from the pre-port Python API; binding owners must
+update them alongside Rust signature changes, including return types and public
+instance attributes. Keep stubs declaration-only. The typing smoke checks all six
+channels against the shared protocol and checks context, history and activity
+types. Installed-wheel checks verify that typing files are packaged.
 
 Node and Claude example commands are in their respective READMEs. Tests use
 injected/local Slack HTTP and WebSocket servers and a fake Claude stream, so they
@@ -124,7 +138,7 @@ do not send messages to a workspace or require model credentials. A live echo
 check with the application's real Slack installation and Claude credentials is
 still needed before deploying that application.
 
-CI exercises both Python backends, the Rust contracts, Node/Claude flows and
+CI exercises the native Python interface, the Rust contracts, Node/Claude flows and
 installed packages. Binary jobs build and smoke-test Linux glibc x64/arm64,
 macOS x64/arm64 and Windows x64. These are qualification targets: support is
 confirmed by passing jobs, not merely by successful cross-compilation. Source
