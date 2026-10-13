@@ -9,7 +9,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 
 type Output = PyResult<Py<PyAny>>;
@@ -57,10 +57,6 @@ pub fn coroutine(py: Python<'_>, future: impl Future<Output = Output> + Send + '
         },
     )?
     .into_any())
-}
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
 }
 struct Awaiting {
     iterator: Py<PyAny>,
@@ -188,7 +184,7 @@ impl HostCoroutine {
         }
         loop {
             let previous = REQUEST.with(|slot| slot.borrow_mut().take());
-            let waker = Waker::from(Arc::new(Noop));
+            let waker = Waker::noop();
             let polled = self
                 .future
                 .get_mut()
@@ -196,7 +192,7 @@ impl HostCoroutine {
                 .as_mut()
                 .ok_or_else(|| PyRuntimeError::new_err("coroutine closed"))?
                 .as_mut()
-                .poll(&mut Context::from_waker(&waker));
+                .poll(&mut Context::from_waker(waker));
             let requested =
                 REQUEST.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), previous));
             match polled {
