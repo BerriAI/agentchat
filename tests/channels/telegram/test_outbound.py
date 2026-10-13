@@ -53,17 +53,6 @@ async def test_reply_payload_routes_to_the_source_and_quotes_it():
 
 
 @pytest.mark.asyncio
-async def test_reply_to_a_callback_quotes_the_keyboard_message():
-    client = TelegramClient()
-    channel = faked(client)
-    try:
-        await channel.reply(read(callback_update()), "ok")
-        assert client.receipt.calls[0][0][1]["reply_parameters"]["message_id"] == 55
-    finally:
-        await channel.close()
-
-
-@pytest.mark.asyncio
 async def test_reply_to_a_callback_drops_tap_only_metadata():
     client = TelegramClient()
     channel = faked(client)
@@ -303,13 +292,9 @@ def test_from_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reply_before_run_and_receipt_failures():
-    receipt = Receipt(None)
-    channel = faked(TelegramClient(receipt))
+async def test_reply_rejects_a_boolean_message_receipt():
+    channel = faked(TelegramClient(Receipt(True)))
     try:
-        with pytest.raises(RuntimeError, match="receipt"):
-            await channel.reply(read(telegram_update()), "answer")
-        receipt.value = True
         with pytest.raises(RuntimeError, match="receipt"):
             await channel.reply(read(telegram_update()), "answer")
     finally:

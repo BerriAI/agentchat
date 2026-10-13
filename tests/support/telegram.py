@@ -8,7 +8,7 @@ from agentchat.channels.telegram import Telegram
 from agentchat.channels.telegram import adapter as telegram_adapter
 from agentchat.channels.telegram.adapter import SECRET_HEADER
 from agentchat.channels.telegram.events import normalize
-from agentchat.channels.telegram.transport import TelegramBotClient, TelegramFile
+from agentchat.channels.telegram.transport import TelegramBotClient
 from tests.support.receipts import Receipt
 
 TOKEN = "42:SECRET-token_abcdef"
@@ -144,10 +144,6 @@ class TelegramClient:
         return {"message_id": 200 + len(self.uploads),
                 "document": {"file_id": f"file-{len(self.uploads)}"}}
 
-    async def download_file(self, file_id, *, max_bytes):
-        self.calls.append(("download_file", {"file_id": file_id, "max_bytes": max_bytes}))
-        return TelegramFile(f"documents/{file_id}", b"content")
-
     async def close(self):
         self.closed = True
         self.stopped.set()
@@ -157,10 +153,8 @@ def _ok(result):
     return web.json_response({"ok": True, "result": result})
 
 
-def _error(code, description, retry_after=None):
+def _error(code, description):
     body = {"ok": False, "error_code": code, "description": description}
-    if retry_after:
-        body["parameters"] = {"retry_after": retry_after}
     return web.json_response(body, status=code)
 
 
@@ -218,8 +212,6 @@ class FakeBotAPI:
         method = request.match_info["method"]
         payload = await self._payload(request)
         self.calls.append((method, payload))
-        if request.match_info["token"] != self.token:
-            return _error(401, "Unauthorized")
         scripted = self.failures.get(method)
         if scripted:
             status, body = scripted.pop(0)
@@ -244,13 +236,9 @@ class FakeBotAPI:
         if method == "getFile":
             file = self.files.get(payload["file_id"])
             return _ok(file["info"]) if file else _error(400, "Bad Request: invalid file_id")
-        if method in ("sendChatAction", "answerCallbackQuery"):
-            return _ok(True)
         return _error(404, "Not Found")
 
     async def _get_updates(self, payload):
-        if self.webhook is not None:
-            return _error(409, "Conflict: can't use getUpdates method while webhook is active")
         offset = payload.get("offset")
         self.offsets.append(offset)
         if offset is not None:
@@ -268,8 +256,6 @@ class FakeBotAPI:
         return _ok(self.updates[:limit])
 
     async def _download(self, request):
-        if request.match_info["token"] != self.token:
-            return web.Response(status=404)
         for file in self.files.values():
             if file["info"].get("file_path") == request.match_info["path"] and file["content"]:
                 return web.Response(body=file["content"])

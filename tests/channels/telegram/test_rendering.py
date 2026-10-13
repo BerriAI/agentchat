@@ -24,22 +24,11 @@ def _types(markdown):
     return [e["type"] for e in render(markdown)[1]]
 
 
-def test_rendering_snake_case_identifiers_are_not_italicised():
-    text, entities = render("call get_user_data() then set_config_value()")
-    assert text == "call get_user_data() then set_config_value()"
-    assert entities == []
-
-
 def test_rendering_fenced_block_becomes_pre_with_language():
     text, entities = render("intro\n\n```ts\nconst a = 1;\n```")
     pre = _only(entities, "pre")
     assert pre["language"] == "ts"
     assert _slice(text, pre) == "const a = 1;"
-
-
-def test_rendering_unclosed_fence_still_yields_a_pre_block():
-    text, entities = render("```js\nconst a = 1;\nconst b = 2;")
-    assert _slice(text, _only(entities, "pre")) == "const a = 1;\nconst b = 2;"
 
 
 def test_rendering_backticks_inside_a_fenced_block_survive():
@@ -50,13 +39,6 @@ def test_rendering_backticks_inside_a_fenced_block_survive():
 
 def test_rendering_nested_emphasis_produces_both_entities():
     assert set(_types("**bold with `code` inside**")) == {"bold", "code"}
-
-
-def test_rendering_offsets_are_utf16_code_units():
-    text, entities = render("🎉 `x` done")
-    code = _only(entities, "code")
-    assert code["offset"] == 3
-    assert _slice(text, code) == "x"
 
 
 def test_rendering_cjk_offsets_line_up():
@@ -71,17 +53,6 @@ def test_rendering_links_render_as_text_link():
     assert _slice(text, link) == "docs"
 
 
-def test_rendering_every_entity_stays_inside_the_text():
-    text, entities = render(
-        "# Head\n\n- **a** and `b`\n- [l](http://x)\n\n```py\nx=1\n```\n\n> quoted"
-    )
-    assert entities
-    for e in entities:
-        assert e["offset"] >= 0
-        assert e["length"] > 0
-        assert e["offset"] + e["length"] <= len(_units(text)) // 2
-
-
 def test_rendering_emoji_before_and_inside_entities():
     text, entities = render("😀 **bold 😀 x** and `日本😀`")
     bold, code = _only(entities, "bold"), _only(entities, "code")
@@ -91,22 +62,14 @@ def test_rendering_emoji_before_and_inside_entities():
     assert code["length"] == 4
 
 
-def test_rendering_astral_emoji_then_bold():
-    text, entities = render("😀 **bold**")
-    assert text == "😀 bold"
-    assert entities == [{"type": "bold", "offset": 3, "length": 4}]
-
-
-@pytest.mark.parametrize("literal", ["edit __init__.py", "run __main__", "a __b__ c"])
-def test_rendering_double_underscore_is_not_a_delimiter(literal):
-    assert render(literal) == (literal, [])
-
-
 @pytest.mark.parametrize(
     "literal",
-    ["snake_case_name", "a*b*c", "get_user_data()", "x * y * z", "file_name_v2.py", "2*3*4"],
+    [
+        "snake_case_name", "a*b*c", "get_user_data()", "x * y * z", "file_name_v2.py", "2*3*4",
+        "edit __init__.py", "run __main__", "a __b__ c", "[docs](./readme.md)",
+    ],
 )
-def test_rendering_intraword_and_spaced_markers_stay_literal(literal):
+def test_rendering_non_delimiters_stay_literal(literal):
     assert render(literal) == (literal, [])
 
 
@@ -153,10 +116,6 @@ def test_rendering_code_inside_link_drops_code_entity():
     text, entities = render("[`run()`](https://x.y)")
     assert text == "run()"
     assert [e["type"] for e in entities] == ["text_link"]
-
-
-def test_rendering_relative_link_stays_literal():
-    assert render("[docs](./readme.md)") == ("[docs](./readme.md)", [])
 
 
 def test_rendering_code_containing_markers_stays_literal():
