@@ -12,6 +12,7 @@ pub mod rendering;
 mod route;
 mod socket;
 mod transport;
+pub mod web_api;
 
 use std::collections::HashMap;
 use std::fmt;
