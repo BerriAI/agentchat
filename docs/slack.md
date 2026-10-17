@@ -338,6 +338,32 @@ before every allocation, byte transfer, and final share. The helper owns upload 
 validation, transfer and receipt verification; it does not require Socket Mode.
 `agentchat.channels.slack.rendering.rich_payload(reply)` builds content fields while the host supplies its saved routing.
 
+Durable hosts can also delegate routing and update payloads to
+`agentchat.channels.slack.rendering.message_request`. It validates the channel and
+timestamps, renders the reply, selects `chat.postMessage` or `chat.update`, and
+clears old attachments on updates. It does not send, authenticate or retry:
+
+```python
+from agentchat import RichReply
+from agentchat.channels.slack.rendering import message_request
+
+request = message_request(
+    RichReply("Completed", blocks=()),
+    channel_id="C01234567",
+    thread_ts="1792100000.000",
+    message_ts="1792100000.001",  # Omit to post a new reply.
+    metadata={"event_type": "saved_delivery", "event_payload": {"id": "one"}},
+    fallback_blocks=False,
+)
+# After the host's durable claim and authorization recheck:
+result = await request_once(request["method"], request["payload"])
+```
+
+By default, empty `RichReply.blocks` generates readable text sections.
+`fallback_blocks=False` preserves explicit empty blocks for plain replacements
+or card-only replies. Persist the host's delivery identity before calling its
+one-attempt transport, and reconcile uncertain outcomes instead of resending.
+
 ## Mirroring web inputs into Slack
 
 Use `app.mirror()` to display an already accepted web input in a bound Slack
@@ -490,3 +516,59 @@ python -m pip install -e ".[dev]"
 ruff check .
 pytest
 ```
+
+### Applications with their own Slack inbox
+
+`SlackHost` provides the same event routing and message interpretation as the Slack
+channel without creating another inbox, credential store, or subscription store.
+The application authenticates the incoming event, authorizes each context read,
+and owns admission, retries, and persistence.
+
+```python
+from agentchat.channels.slack.host import SlackHost
+
+host = SlackHost(
+    bot_user_id="UBOT00001",
+    workspace_id="TWORK0001",
+    exclude_prefixes=("!aside",),  # Optional application policy.
+)
+event = host.normalize_event(authenticated_payload)
+if event is not None:
+    context = await host.thread_context(event, authorized_page_request)
+```
+
+`authorized_page_request` is an async callback receiving `conversations.replies`
+parameters. It returns the raw Slack response (`ok`, `messages`, `has_more`, and
+`response_metadata.next_cursor`). Connector adapters may instead return their
+next cursor in `next_arguments.cursor`. The callback runs on the caller's event
+loop; it supplies credentials and enforces the application's access policy.
+Authorization exceptions propagate. A provider error returned as `ok: false`
+produces explicit context coverage; a failed later page preserves earlier messages.
+
+The normalized event carries its current preview data bound to the event origin
+and author. Passing that event to `thread_context` preserves its previews if the
+provider read fails and merges them with fetched previews without duplication.
+Pass `request_page=None` (or omit it) when application policy forbids a history
+read, such as a direct-message workflow. This performs no I/O and reports
+`history_not_requested` with partial or unavailable coverage. A reference copied
+from a different event is rejected before the callback runs.
+
+Context includes the parent and recent messages, with author IDs, file references,
+and link previews. Current-message text, files, and composer `rich_text` blocks are
+excluded because the current request already contains them; current link previews
+remain. Source data is returned as bounded JSON text and must be presented as
+untrusted reference material, separately from the user's request. Context reading
+does not fetch linked URLs or download attachments.
+
+Defaults limit the read to five pages, 40,000 content characters, 8,000 characters
+per message, and eight seconds. Results report `complete`, `partial`, or
+`unavailable`; missing roots, pagination limits, truncation, and provider failures
+are explicit. The root is retained when older replies must be removed to meet the
+budget. The timestamp cutoff is checked locally even when a connector cannot send
+Slack's `latest` parameter. Code and quoted mentions remain literal text and do
+not address the bot. Malformed supported events raise `ValueError`; ignored
+subtypes and configured exclusions return `None`.
+
+Existing `Slack.thread_history` remains supported and shares record normalization
+with this API. Applications should persist admitted context if retries must see
+the same snapshot.

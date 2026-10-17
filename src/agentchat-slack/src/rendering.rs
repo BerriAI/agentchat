@@ -72,12 +72,19 @@ fn expanded_blocks(blocks: &[Map<String, Value>]) -> Vec<Value> {
 }
 
 pub fn rich_payload(reply: &RichReply) -> Result<Value> {
+    rich_payload_with_fallback_blocks(reply, true)
+}
+
+pub(crate) fn rich_payload_with_fallback_blocks(
+    reply: &RichReply,
+    fallback_blocks: bool,
+) -> Result<Value> {
     if super::events::trim_python(&reply.text).is_empty() {
         return Err(Error::InvalidInput(
             "Rich replies require fallback text".into(),
         ));
     }
-    let blocks = if reply.blocks.is_empty() {
+    let blocks = if reply.blocks.is_empty() && fallback_blocks {
         text_blocks(&reply.text)?
     } else {
         expanded_blocks(&reply.blocks)

@@ -7,6 +7,8 @@
 pub mod events;
 pub mod file_transfers;
 mod files;
+pub mod host;
+pub mod message_request;
 pub mod policy;
 pub mod rendering;
 mod route;
