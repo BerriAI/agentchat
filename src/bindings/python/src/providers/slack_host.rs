@@ -2,10 +2,11 @@
 use super::{slack_files::policy_error, transport::*};
 use crate::{convert, host};
 use agentchat_slack::host::{
-    ContextLimits, CurrentReference, SlackHost as CoreHost, ThreadContextReader, ThreadOrigin,
+    ack_accepted, ContextLimits, CurrentReference, SlackHost as CoreHost, ThreadContextReader,
+    ThreadOrigin,
 };
 use pyo3::{
-    exceptions::{PyTimeoutError, PyValueError},
+    exceptions::{PyException, PyTimeoutError, PyValueError},
     prelude::*,
 };
 use serde_json::json;
@@ -18,17 +19,19 @@ struct SlackHost {
 #[pymethods]
 impl SlackHost {
     #[new]
-    #[pyo3(signature=(*,bot_user_id,workspace_id=None,exclude_prefixes=Vec::new()))]
+    #[pyo3(signature=(*,bot_user_id,workspace_id=None,exclude_prefixes=Vec::new(),ack_emoji=Some("eyes")))]
     fn new(
         bot_user_id: String,
         workspace_id: Option<String>,
         exclude_prefixes: Vec<String>,
+        ack_emoji: Option<&str>,
     ) -> Self {
         Self {
             inner: CoreHost {
                 bot_user_id,
                 workspace_id,
                 exclude_prefixes,
+                ack_emoji: ack_emoji.map(str::to_owned),
             },
         }
     }
@@ -41,6 +44,50 @@ impl SlackHost {
             .normalize_event(&convert::to_json(payload)?)
             .map_err(policy_error)?;
         convert::from_json(py, &json!(event))
+    }
+    #[pyo3(signature=(event,request,*,timeout=3.0))]
+    fn acknowledge(
+        &self,
+        py: Python<'_>,
+        event: &Bound<'_, PyAny>,
+        request: Py<PyAny>,
+        timeout: f64,
+    ) -> PyResult<Py<PyAny>> {
+        if !timeout.is_finite() || timeout <= 0.0 {
+            return Err(PyValueError::new_err("Expected a positive finite timeout"));
+        }
+        let source = convert::to_json(event)
+            .map_err(|_| PyValueError::new_err("Invalid Slack event origin"))?;
+        let origin: ThreadOrigin = serde_json::from_value(source)
+            .map_err(|_| PyValueError::new_err("Invalid Slack event origin"))?;
+        let payload = self.inner.acknowledgement(&origin);
+        host::coroutine(py, async move {
+            let Some(payload) = payload else {
+                return j(json!(false));
+            };
+            let args = vec![j(json!("reactions.add"))?, j(payload)?];
+            let pending = match call(&request, "__call__", args, None) {
+                Ok(pending) => pending,
+                Err(error) if Python::attach(|py| error.is_instance_of::<PyException>(py)) => {
+                    return j(json!(false));
+                }
+                Err(error) => return Err(error),
+            };
+            let bounded = call(
+                &module("asyncio")?,
+                "wait_for",
+                vec![pending],
+                Some(j(json!({"timeout":timeout}))?),
+            )?;
+            let response = match host::await_py(bounded).await {
+                Ok(response) => response,
+                Err(error) if Python::attach(|py| error.is_instance_of::<PyException>(py)) => {
+                    return j(json!(false));
+                }
+                Err(error) => return Err(error),
+            };
+            j(json!(ack_accepted(&value(&response)?)))
+        })
     }
     // Explicit Python keyword arguments are the public FFI contract.
     #[allow(clippy::too_many_arguments)]

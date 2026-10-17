@@ -306,3 +306,112 @@ async def test_reference_from_another_event_is_rejected_before_callback(field, c
     with pytest.raises(ValueError, match="different event"):
         await HOST.thread_context(source, request)
     assert not calls
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_uses_the_thread_reply_message_timestamp():
+    source = HOST.normalize_event(event())
+    assert source is not None
+    calls = []
+
+    async def request(api_method, payload):
+        calls.append((api_method, payload))
+        return {"ok": True}
+
+    assert await HOST.acknowledge(source, request) is True
+    assert calls == [(
+        "reactions.add",
+        {"channel": ORIGIN["channel_id"], "name": "eyes", "timestamp": ORIGIN["message_ts"]},
+    )]
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_is_disabled_without_an_emoji():
+    source = HOST.normalize_event(event())
+    assert source is not None
+    calls = []
+
+    async def request(api_method, payload):
+        calls.append((api_method, payload))
+        return {"ok": True}
+
+    host = SlackHost(bot_user_id=BOT, workspace_id=ORIGIN["team_id"], ack_emoji=None)
+    assert await host.acknowledge(source, request) is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_accepts_already_reacted_and_rejects_provider_errors():
+    source = HOST.normalize_event(event())
+    assert source is not None
+
+    async def already_reacted(api_method, payload):
+        return {"ok": False, "error": "already_reacted"}
+
+    async def missing_scope(api_method, payload):
+        return {"ok": False, "error": "missing_scope"}
+
+    assert await HOST.acknowledge(source, already_reacted) is True
+    assert await HOST.acknowledge(source, missing_scope) is False
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_swallows_callback_exceptions_and_timeouts():
+    source = HOST.normalize_event(event())
+    assert source is not None
+
+    async def raising(api_method, payload):
+        raise PermissionError("authorization revoked")
+
+    async def slow(api_method, payload):
+        await asyncio.Event().wait()
+
+    assert await HOST.acknowledge(source, raising) is False
+    assert await HOST.acknowledge(source, slow, timeout=0.01) is False
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_cancellation_propagates():
+    source = HOST.normalize_event(event())
+    assert source is not None
+    started = asyncio.Event()
+
+    async def blocked(api_method, payload):
+        started.set()
+        await asyncio.Event().wait()
+
+    pending = asyncio.create_task(HOST.acknowledge(source, blocked))
+    await started.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_rejects_invalid_event_before_callback():
+    source = HOST.normalize_event(event())
+    assert source is not None
+    invalid = dict(source)
+    invalid.pop("message_ts")
+    calls = []
+
+    async def request(api_method, payload):
+        calls.append((api_method, payload))
+        return {"ok": True}
+
+    with pytest.raises(ValueError, match="Invalid Slack event origin"):
+        await HOST.acknowledge(invalid, request)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_value", [0, -1, float("inf"), float("nan")])
+async def test_acknowledgement_rejects_nonpositive_or_nonfinite_timeout(timeout_value):
+    source = HOST.normalize_event(event())
+    assert source is not None
+
+    async def request(api_method, payload):
+        return {"ok": True}
+
+    with pytest.raises(ValueError, match="positive finite timeout"):
+        await HOST.acknowledge(source, request, timeout=timeout_value)

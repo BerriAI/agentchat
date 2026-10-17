@@ -17,7 +17,7 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 
-use super::{Admission, Inner, Slack, CLOSED, DELIVERY_SCOPE, NEW, RUNNING};
+use super::{host::ack_request, Admission, Inner, Slack, CLOSED, DELIVERY_SCOPE, NEW, RUNNING};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -328,9 +328,19 @@ impl Slack {
                             .client
                             .call(
                                 "reactions.add",
-                                &json!({
-                            "channel":message.metadata.get("channel_id"), "name":emoji,
-                            "timestamp":message.metadata.get("message_timestamp")}),
+                                &ack_request(
+                                    message
+                                        .metadata
+                                        .get("channel_id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                    emoji,
+                                    message
+                                        .metadata
+                                        .get("message_timestamp")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                ),
                             )
                             .await;
                     }
