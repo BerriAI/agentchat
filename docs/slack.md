@@ -537,6 +537,11 @@ if event is not None:
     context = await host.thread_context(event, authorized_page_request)
 ```
 
+After deciding to handle a normalized event, call `await host.acknowledge(event,
+request)` before slower work such as reading thread context. This best-effort
+`reactions.add` uses the event's `message_ts`; it returns `False` when disabled,
+timed out, or not accepted.
+
 `authorized_page_request` is an async callback receiving `conversations.replies`
 parameters. It returns the raw Slack response (`ok`, `messages`, `has_more`, and
 `response_metadata.next_cursor`). Connector adapters may instead return their

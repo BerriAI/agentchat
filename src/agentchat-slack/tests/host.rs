@@ -1,5 +1,6 @@
 use agentchat_slack::host::{
-    ContextLimits, CoverageStatus, SlackHost, ThreadContextReader, ThreadOrigin,
+    ack_accepted, ack_request, ContextLimits, CoverageStatus, SlackHost, ThreadContextReader,
+    ThreadOrigin,
 };
 use serde_json::json;
 
@@ -8,17 +9,21 @@ fn host() -> SlackHost {
         bot_user_id: "UBOT00001".into(),
         workspace_id: Some("TTEST0001".into()),
         exclude_prefixes: vec!["!aside".into()],
+        ack_emoji: Some("eyes".into()),
+    }
+}
+fn origin() -> ThreadOrigin {
+    ThreadOrigin {
+        team_id: "TTEST0001".into(),
+        channel_id: "CTEST0001".into(),
+        thread_ts: "1780000000.000001".into(),
+        message_ts: "1780000000.000010".into(),
     }
 }
 fn reader(max_pages: usize, max_chars: usize) -> ThreadContextReader {
     ThreadContextReader::new(
         host(),
-        ThreadOrigin {
-            team_id: "TTEST0001".into(),
-            channel_id: "CTEST0001".into(),
-            thread_ts: "1780000000.000001".into(),
-            message_ts: "1780000000.000010".into(),
-        },
+        origin(),
         ContextLimits {
             max_pages,
             max_chars,
@@ -29,6 +34,36 @@ fn reader(max_pages: usize, max_chars: usize) -> ThreadContextReader {
 }
 fn record(ts: &str, text: &str) -> serde_json::Value {
     json!({"ts":ts,"user":"UAUTHOR01","text":text})
+}
+
+#[test]
+fn acknowledgement_payload_uses_the_message_timestamp() {
+    let expected = json!({
+        "channel":"CTEST0001",
+        "name":"eyes",
+        "timestamp":"1780000000.000010",
+    });
+    assert_eq!(
+        ack_request("CTEST0001", "eyes", "1780000000.000010"),
+        expected
+    );
+    assert_eq!(host().acknowledgement(&origin()), Some(expected));
+}
+
+#[test]
+fn acknowledgement_can_be_disabled() {
+    let mut host = host();
+    host.ack_emoji = None;
+    assert_eq!(host.acknowledgement(&origin()), None);
+    host.ack_emoji = Some(String::new());
+    assert_eq!(host.acknowledgement(&origin()), None);
+}
+
+#[test]
+fn acknowledgement_acceptance_includes_already_reacted() {
+    assert!(ack_accepted(&json!({"ok":true})));
+    assert!(ack_accepted(&json!({"ok":false,"error":"already_reacted"})));
+    assert!(!ack_accepted(&json!({"ok":false,"error":"missing_scope"})));
 }
 
 #[test]

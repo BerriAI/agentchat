@@ -38,9 +38,15 @@ class SlackHost:
     def __init__(
         self, *, bot_user_id: str, workspace_id: str | None = ...,
         exclude_prefixes: Sequence[str] = ...,
+        ack_emoji: str | None = ...,
     ) -> None: ...
     def routing_text(self, text: str) -> SlackRouting: ...
     def normalize_event(self, payload: Mapping[str, object]) -> SlackHostEvent | None: ...
+    async def acknowledge(
+        self, event: Mapping[str, object],
+        request: Callable[[str, dict[str, object]], Awaitable[Mapping[str, object]]],
+        *, timeout: float = ...,  # noqa: ASYNC109 - bounded native callback protocol
+    ) -> bool: ...
     async def thread_context(
         self, origin: Mapping[str, object],
         request_page: Callable[[dict[str, object]], Awaitable[Mapping[str, object]]] | None = ...,

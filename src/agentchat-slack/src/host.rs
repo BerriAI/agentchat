@@ -10,6 +10,16 @@ pub struct SlackHost {
     pub bot_user_id: String,
     pub workspace_id: Option<String>,
     pub exclude_prefixes: Vec<String>,
+    pub ack_emoji: Option<String>,
+}
+
+pub fn ack_request(channel_id: &str, emoji: &str, message_ts: &str) -> Value {
+    json!({"channel":channel_id,"name":emoji,"timestamp":message_ts})
+}
+
+pub fn ack_accepted(response: &Value) -> bool {
+    response.get("ok").and_then(Value::as_bool) == Some(true)
+        || response.get("error").and_then(Value::as_str) == Some("already_reacted")
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,6 +73,13 @@ fn timestamp(value: &str) -> Option<SlackTimestamp> {
         .flatten()
 }
 impl SlackHost {
+    pub fn acknowledgement(&self, origin: &ThreadOrigin) -> Option<Value> {
+        self.ack_emoji
+            .as_deref()
+            .filter(|emoji| !emoji.is_empty())
+            .map(|emoji| ack_request(&origin.channel_id, emoji, &origin.message_ts))
+    }
+
     pub fn routing_text(&self, text: &str) -> SlackRouting {
         let routed = events::routing_text(text, Some(&self.bot_user_id));
         let lower = routed.text.to_lowercase();

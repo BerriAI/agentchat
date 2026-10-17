@@ -7,6 +7,7 @@ use crate::{convert, host};
 use agentchat_core::{Message, Role};
 use agentchat_slack::{
     events,
+    host::ack_request,
     policy::{
         self, DeliveryKind, MessageReceipt, MirroredReply, ReplyDestination, ReplyMessageRoute,
         ThreadHistory,
@@ -509,7 +510,20 @@ impl Slack {
         host::coroutine(py, async move {
             if let Some(emoji) = emoji.filter(|e| !e.is_empty()) {
                 let message = from_message(&message)?;
-                let result=acall(&web,"reactions_add",vec![],Some(j(json!({"channel":message.metadata.get("channel_id"),"name":emoji,"timestamp":message.metadata.get("message_timestamp")}))?)).await;
+                let payload = ack_request(
+                    message
+                        .metadata
+                        .get("channel_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default(),
+                    &emoji,
+                    message
+                        .metadata
+                        .get("message_timestamp")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default(),
+                );
+                let result = acall(&web, "reactions_add", vec![], Some(j(payload)?)).await;
                 if let Err(error) = result {
                     if !Python::attach(|py| error.is_instance_of::<PyException>(py)) {
                         return Err(error);

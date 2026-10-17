@@ -50,6 +50,7 @@ async def check_api(
 async def check_slack_host(
     payload: Mapping[str, object],
     request_page: Callable[[dict[str, object]], Awaitable[Mapping[str, object]]],
+    request_ack: Callable[[str, dict[str, object]], Awaitable[Mapping[str, object]]],
     reply: RichReply,
 ) -> None:
     host = SlackHost(bot_user_id="UBOT00001", exclude_prefixes=("!aside",))
@@ -57,6 +58,7 @@ async def check_slack_host(
     normalized = host.normalize_event(payload)
     assert_type(normalized, SlackHostEvent | None)
     if normalized is not None:
+        assert_type(await host.acknowledge(normalized, request_ack), bool)
         assert_type(await host.thread_context(normalized, request_page), ThreadContext)
         assert_type(await host.thread_context(normalized), ThreadContext)
     assert_type(message_request(reply, channel_id="CCHANNEL1"), SlackMessageRequest)
