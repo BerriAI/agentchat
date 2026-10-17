@@ -338,31 +338,10 @@ before every allocation, byte transfer, and final share. The helper owns upload 
 validation, transfer and receipt verification; it does not require Socket Mode.
 `agentchat.channels.slack.rendering.rich_payload(reply)` builds content fields while the host supplies its saved routing.
 
-Durable hosts can also delegate routing and update payloads to
-`agentchat.channels.slack.rendering.message_request`. It validates the channel and
-timestamps, renders the reply, selects `chat.postMessage` or `chat.update`, and
-clears old attachments on updates. It does not send, authenticate or retry:
-
-```python
-from agentchat import RichReply
-from agentchat.channels.slack.rendering import message_request
-
-request = message_request(
-    RichReply("Completed", blocks=()),
-    channel_id="C01234567",
-    thread_ts="1792100000.000",
-    message_ts="1792100000.001",  # Omit to post a new reply.
-    metadata={"event_type": "saved_delivery", "event_payload": {"id": "one"}},
-    fallback_blocks=False,
-)
-# After the host's durable claim and authorization recheck:
-result = await request_once(request["method"], request["payload"])
-```
-
-By default, empty `RichReply.blocks` generates readable text sections.
-`fallback_blocks=False` preserves explicit empty blocks for plain replacements
-or card-only replies. Persist the host's delivery identity before calling its
-one-attempt transport, and reconcile uncertain outcomes instead of resending.
+Applications with durable queues can compose the SDK's signed webhook, context,
+file-reader and one-attempt delivery services without another state store. See
+[applications with their own Slack inbox](#applications-with-their-own-slack-inbox)
+for the shared provider APIs and the responsibilities retained by the host.
 
 ## Mirroring web inputs into Slack
 
@@ -509,20 +488,45 @@ See [the source protocol](../python/agentchat/channels/slack/transport.py) and
 [the injected-source tests](../tests/channels/slack/test_event_source.py) for a
 concrete queue-source composition that reuses the same adapter.
 
-## Development
+## Applications with their own Slack inbox
 
-```bash
-python -m pip install -e ".[dev]"
-ruff check .
-pytest
+These services reuse Slack provider behavior without creating another inbox,
+credential store, subscription store or outbox. The host owns authorization,
+workspace and participant policy, commands, conversation admission, transaction
+boundaries and durable effect claims. The host functions in the examples below
+are integration hooks, not SDK-provided storage or credential APIs.
+
+### Verify HTTP requests
+
+```python
+from agentchat.channels.slack.webhook import SlackWebhook
+
+webhook = SlackWebhook(signing_secret)  # Obtained from the host's secret store.
+
+async def receive_event(raw, headers):
+    incoming = webhook.event(raw, headers)
+    if incoming["kind"] == "challenge":
+        return {"challenge": incoming["challenge"]}
+    if incoming["kind"] == "event":
+        payload = incoming["payload"]
+        await authorize_workspace(payload["team_id"])
+        await persist_inbox(payload)  # Deduplicate before acknowledging.
+    return {"ok": True}
 ```
 
-### Applications with their own Slack inbox
+Read HTTP bodies with a streaming size limit before calling the helper. `event`
+checks the supplied byte limit (default 256 KiB), timestamp freshness, HMAC and
+JSON envelope. `interaction(raw, headers)` verifies and parses a single form
+`payload` with a default 64 KiB limit. Both return decoded data; neither admits a
+conversation. Map `SlackSignatureError`, `SlackPayloadError` and
+`SlackBodyTooLarge` to the host's HTTP errors (typically 401, 400 and 413).
+The size error subclasses `SlackPayloadError`, so handle it first. `verify` is
+available when only signature verification is needed; `now=` supports a host clock.
 
-`SlackHost` provides the same event routing and message interpretation as the Slack
-channel without creating another inbox, credential store, or subscription store.
-The application authenticates the incoming event, authorizes each context read,
-and owns admission, retries, and persistence.
+### Assemble authorized context
+
+`SlackHost` supplies event routing, attribution and bounded thread context. Pass
+only authenticated events, and authorize every page in the read callback.
 
 ```python
 from agentchat.channels.slack.host import SlackHost
@@ -572,3 +576,124 @@ subtypes and configured exclusions return `None`.
 Existing `Slack.thread_history` remains supported and shares record normalization
 with this API. Applications should persist admitted context if retries must see
 the same snapshot.
+
+### Send once and reconcile uncertain delivery
+
+```python
+from agentchat import RichReply
+from agentchat.channels.slack.delivery import SlackDelivery
+from agentchat.channels.slack.rendering import message_request
+
+async def request(http_method, api_method, payload):
+    await authorize_delivery()  # Runs before each send or reconciliation page.
+    return await authenticated_request_once(http_method, api_method, payload)
+
+delivery = SlackDelivery(request, transport_errors=(HostTransportError,))
+plan = message_request(
+    RichReply("Completed"), channel_id=saved_channel, thread_ts=saved_thread,
+    metadata={"event_type": "saved_delivery", "event_payload": {"id": delivery_id}},
+)
+if await claim_pending_delivery(delivery_id):
+    outcome = await delivery.send_request(plan)
+    if outcome["status"] != "uncertain":
+        await save_delivery_receipt(delivery_id, outcome)
+    # Otherwise retain the in-flight claim. Do not post again.
+```
+
+Prepare and validate the plan before acquiring the durable sending claim, then
+recheck current authorization before external I/O. `send_request` performs one
+callback invocation and returns `confirmed`, `rejected` or `uncertain`, with a
+receipt when available. Pass transport/response-decoding exception classes from
+your client; other exceptions and cancellation propagate. The callback and its
+underlying client must also disable automatic write retries. The SDK never
+releases or retries the host's claim after a lost response or cancellation.
+
+`send(reply, channel_id=..., ...)` combines planning and one attempt when separate
+planning is unnecessary. Set `message_ts=` to update an existing message;
+`fallback_blocks=False` preserves explicit empty blocks for plain updates or
+card-only replies. Updates clear old attachments. `set_status(channel, thread,
+text)` uses the same callback and outcome type for one working-status attempt;
+the host owns refresh scheduling and clears it with an empty string.
+
+Reconcile a saved in-flight delivery using reads only:
+
+```python
+outcome = await delivery.reconcile(
+    saved_channel, saved_thread, event_type="saved_delivery", event_id=delivery_id,
+    max_pages=5, timeout=8,
+)
+if outcome["status"] == "confirmed":
+    await save_delivery_receipt(delivery_id, outcome)
+```
+
+The SDK chooses GET for reconciliation and POST for writes. Reconciliation matches
+both metadata event type and ID within the requested thread, follows bounded
+pagination, and stops on repeated cursors. An absent receipt, failed read or
+exhausted budget stays `uncertain`; none proves that a write failed or permits a
+resend. Authorize inside the callback so revocation stops subsequent pages.
+
+### Read files with rotating credentials
+
+`agentchat.channels.slack.files.SlackFileReader` lets a host keep its credential
+store and authorization checks while the SDK owns acquisition and verification.
+The existing `download_slack_file` and native attachment download API share the
+same metadata and transfer-integrity policies.
+
+```python
+from agentchat.channels.slack.files import SlackFileReader, file_operation, inspect_canvas
+
+reader = SlackFileReader(max_bytes=25 * 1024 * 1024)
+file = await reader.read(
+    "F12345678",
+    token=current_bot_token,       # async () -> str
+    request=authorized_request,    # async (method, payload, token) -> Slack response
+    authorize=require_access,      # async () -> None; checked around provider reads
+)
+try:
+    if file.representation == "canvas_html":
+        media_type, _, preview = await file_operation(inspect_canvas, file.raw)
+    # The seekable original is verified and positioned at byte zero.
+    # The host performs its own inspection, transcription and durable retention.
+finally:
+    file.raw.close()
+```
+
+Translate safe connector failures to `SlackTransportError` in the host callback;
+include only its code, status, retry interval and dispatch/rejection facts.
+Authorization exceptions propagate unchanged; an explicit `SlackFileError`
+provides a safe attachment diagnostic. Access is checked before credential
+acquisition, after it, after metadata lookup and before returning the file.
+Defaults allow two read attempts within 90 seconds. Credential acquisition is never
+replayed when a refresh outcome is uncertain; eligible read retries respect the
+complete provider interval, shared cooldown and total budget.
+
+Private downloads reject redirects, unexpected content encoding, partial responses,
+size mismatches and storage-limit violations before returning a file. Cancelled
+file-worker operations finish before their temporary file closes. Canvas projection
+reads a bounded UTF-8 prefix, ignores hidden and executable HTML, marks truncated
+previews and leaves original bytes untouched. Applications remain responsible for
+access policy, content inspection, image previews, audio transcription and durable
+retention. Treat extracted content as untrusted, and close the returned file.
+
+### Format replies without moving application policy
+
+`rendering.markdown_text(text, mentions=allowed_ids, resolve_link=resolver)` escapes
+unapproved mentions, adapts Markdown headings and bold, and preserves code bodies.
+The optional synchronous resolver receives local Markdown targets and inline-code
+filenames and returns an authorized URL or `None`. It does not receive fenced code
+or HTTP links. The host chooses mention permissions and resolves local file access;
+`RichReply` does not convert its text implicitly.
+
+`rendering.text_blocks(text, limit=2900)` and `rendering.split_text(text, limit=2900)`
+share Unicode-, link- and fence-safe chunking. Section content defaults to 2,992
+characters, leaving room for boundary fences. `split_text` preserves newlines by
+default; `trim_boundary_newlines=True` retains the older boundary policy when
+needed. Application-specific fallback wording and product controls stay in the host.
+
+## Development
+
+```bash
+python -m pip install -e ".[dev]"
+ruff check .
+pytest
+```

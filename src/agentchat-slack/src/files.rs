@@ -66,31 +66,66 @@ impl FileTransport for Slack {
         Ok(())
     }
     async fn download(&self, url: &str, token: &str, max_bytes: usize) -> Result<Vec<u8>> {
+        self.download_file(
+            &file_transfers::reader::FileMetadata::location(url),
+            token,
+            max_bytes,
+        )
+        .await
+    }
+    async fn download_file(
+        &self,
+        file: &file_transfers::reader::FileMetadata,
+        token: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>> {
         let url = self
             .inner
             .client
-            .file_url(url, file_transfers::FilePurpose::Download)?;
+            .file_url(&file.url, file_transfers::FilePurpose::Download)?;
         let response = self
             .inner
             .client
             .http
             .get(url)
             .bearer_auth(token)
+            .header("Accept-Encoding", "identity")
             .send()
             .await
             .map_err(|_| Error::Transport("Slack file download failed".into()))?;
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(Error::Transport(
-                "Could not read this Slack attachment".into(),
-            ));
-        }
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .map(|v| v.to_str().unwrap_or("invalid").to_owned())
+        };
+        let state = std::sync::Arc::new(std::sync::Mutex::new(
+            file_transfers::reader::ReadProgress::default(),
+        ));
+        let policy_error =
+            |error: file_transfers::failure::ReadFailure| Error::InvalidInput(error.to_string());
+        let mut verifier = file_transfers::reader::TransferVerifier::new(
+            file,
+            file_transfers::reader::DownloadHeaders {
+                status: response.status().as_u16(),
+                encoding: header("Content-Encoding"),
+                length: header("Content-Length"),
+                content_range: header("Content-Range"),
+                content_type: header("Content-Type"),
+                retry_after: header("Retry-After"),
+            },
+            max_bytes,
+            state,
+        )
+        .map_err(policy_error)?;
         let mut stream = response.bytes_stream();
         let mut buffer = DownloadBuffer::new(max_bytes);
         while let Some(chunk) = stream.next().await {
-            buffer.append(
-                &chunk.map_err(|_| Error::Transport("Slack file download failed".into()))?,
-            )?;
+            let chunk = chunk.map_err(|_| Error::Transport("Slack file download failed".into()))?;
+            verifier.accept(chunk.len()).map_err(policy_error)?;
+            buffer.append(&chunk)?;
         }
+        verifier.finish().map_err(policy_error)?;
         buffer.finish()
     }
     async fn guard(&self) -> Result<()> {

@@ -2,10 +2,10 @@
 use super::transport::*;
 use crate::{convert, host};
 use agentchat_core::{Error, UploadFile};
-use agentchat_slack::file_transfers::{self, DownloadBuffer, FileTransport, TransferError};
+use agentchat_slack::file_transfers::{self, reader::FileMetadata, FileTransport, TransferError};
 use async_trait::async_trait;
 use pyo3::{
-    exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError},
+    exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
     types::{PyBool, PyBytes, PyTuple},
 };
@@ -110,7 +110,16 @@ impl FileTransport for PythonFiles {
         Ok(())
     }
     async fn download(&self, url: &str, token: &str, max_bytes: usize) -> PyResult<Vec<u8>> {
-        download_bytes(url, token, max_bytes).await
+        self.download_file(&FileMetadata::location(url), token, max_bytes)
+            .await
+    }
+    async fn download_file(
+        &self,
+        file: &FileMetadata,
+        token: &str,
+        max_bytes: usize,
+    ) -> PyResult<Vec<u8>> {
+        super::slack_reader::download_bytes(file, token, max_bytes).await
     }
     async fn guard(&self) -> PyResult<()> {
         if let Some(guard) = &self.guard {
@@ -131,30 +140,6 @@ async fn session(timeout: u64) -> PyResult<Py<PyAny>> {
     Python::attach(|py| kwargs.bind(py).set_item("timeout", timeout))?;
     let session = call(&aiohttp, "ClientSession", vec![], Some(kwargs))?;
     Ok(session)
-}
-async fn download_bytes(url: &str, token: &str, max_bytes: usize) -> PyResult<Vec<u8>> {
-    file_transfers::validate_file_url(url, false).map_err(policy_error)?;
-    let session = session(30).await?;
-    let client = acall(&session, "__aenter__", vec![], None).await?;
-    let result=async {
-        let response=call(&client,"get",vec![j(json!(url))?],Some(j(json!({"headers":{"Authorization":format!("Bearer {token}")},"allow_redirects":false}))?))?;
-        let received=acall(&response,"__aenter__",vec![],None).await?;
-        let result=async{
-            if extract::<u16>(&get(&received,"status")?)?!=200{return Err(PyRuntimeError::new_err("Could not read this Slack attachment. Upload it again."));}
-            let chunks=call(&get(&received,"content")?,"iter_chunked",vec![j(json!(65536))?],None)?;
-            let iterator=call(&chunks,"__aiter__",vec![],None)?;
-            let mut buffer=DownloadBuffer::new(max_bytes);
-            loop {match acall(&iterator,"__anext__",vec![],None).await {
-                Ok(chunk)=>{let bytes=Python::attach(|py|chunk.bind(py).cast::<PyBytes>().map(|b|b.as_bytes().to_vec()).map_err(PyErr::from))?;buffer.append(&bytes).map_err(policy_error)?;},
-                Err(error) if Python::attach(|py|error.is_instance_of::<PyStopAsyncIteration>(py))=>break,
-                Err(error)=>return Err(error),
-            }}
-            let bytes=buffer.finish().map_err(policy_error)?;Ok(Python::attach(|py|PyBytes::new(py,&bytes).into_any().unbind()))
-        }.await;
-        exit_context(&response,result).await
-    }.await;
-    let raw = exit_context(&session, result).await?;
-    Python::attach(|py| Ok(raw.bind(py).cast::<PyBytes>()?.as_bytes().to_vec()))
 }
 #[pyfunction]
 fn slack_upload_bytes(py: Python<'_>, url: String, raw: Vec<u8>) -> PyResult<Py<PyAny>> {

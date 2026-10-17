@@ -1,33 +1,89 @@
 //! Provider-owned formatting, preserving Unicode character boundaries.
 
 use agentchat_core::{Error, Message, Result, RichReply, Role, Sender};
+use regex::Regex;
 use serde_json::{json, Map, Value};
+use std::sync::LazyLock;
+
+mod markdown;
+pub use markdown::{markdown_text, MarkdownOptions};
 
 pub const MIRROR_EVENT_TYPE: &str = "agentchat_user_mirror_v1";
 
-/// Split a single Slack message into expanded sections without breaking code fences.
-pub fn text_blocks(text: &str) -> Result<Vec<Value>> {
-    if super::events::trim_python(text).is_empty() {
+/// Content budgets exclude the fence delimiters inserted around split code blocks.
+pub struct SplitOptions {
+    pub limit: usize,
+    pub trim_boundary_newlines: bool,
+}
+
+impl Default for SplitOptions {
+    fn default() -> Self {
+        Self {
+            limit: 2600,
+            trim_boundary_newlines: false,
+        }
+    }
+}
+
+/// Split mrkdwn without breaking Unicode, code-fence markers or fitting link tokens.
+pub fn split_text(text: &str, options: SplitOptions) -> Result<Vec<String>> {
+    split_chunks(text, options, None)
+}
+
+fn split_chunks(
+    text: &str,
+    options: SplitOptions,
+    max_chunks: Option<usize>,
+) -> Result<Vec<String>> {
+    if !(3..=2992).contains(&options.limit) {
         return Err(Error::InvalidInput(
-            "Slack replies require readable text".into(),
+            "Slack content limit must be between 3 and 2992".into(),
         ));
     }
+    static LINKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<https?://[^>]+>").unwrap());
+    let mut previous_byte = 0;
+    let mut previous_char = 0;
+    let links: Vec<_> = LINKS
+        .find_iter(text)
+        .map(|found| {
+            let start = previous_char + text[previous_byte..found.start()].chars().count();
+            let end = start + found.as_str().chars().count();
+            previous_byte = found.end();
+            previous_char = end;
+            start..end
+        })
+        .collect();
     let chars: Vec<char> = text.chars().collect();
-    let mut rest = chars.as_slice();
+    let mut offset = 0;
     let mut opened = false;
-    let mut blocks = Vec::new();
-    while !rest.is_empty() {
-        let limit = 2992;
+    let mut chunks = Vec::new();
+    while offset < chars.len() {
+        if max_chunks.is_some_and(|limit| chunks.len() >= limit) {
+            return Err(Error::InvalidInput(
+                "Slack replies support at most 50 sections; split the reply".into(),
+            ));
+        }
+        let rest = &chars[offset..];
+        let limit = options.limit;
         let mut end = if rest.len() <= limit {
             rest.len()
         } else {
             rest[..limit]
                 .iter()
                 .rposition(|c| *c == '\n')
-                .map_or(0, |i| i + 1)
+                .map_or(0, |i| i + usize::from(!options.trim_boundary_newlines))
         };
         if end < limit / 2 && rest.len() > limit {
             end = limit;
+        }
+        if let Some(link) = links.iter().find(|link| {
+            link.start < offset + end && offset + end < link.end && link.len() <= limit
+        }) {
+            end = if link.start > offset {
+                link.start
+            } else {
+                link.end
+            } - offset;
         }
         for offset in [2, 1] {
             if end >= offset
@@ -45,16 +101,44 @@ pub fn text_blocks(text: &str) -> Result<Vec<Value>> {
             part,
             if in_fence { "\n```" } else { "" }
         );
-        blocks.push(json!({"type":"section", "expand":true,
-            "text":{"type":"mrkdwn", "text":body, "verbatim":true}}));
-        if blocks.len() > 50 {
-            return Err(Error::InvalidInput(
-                "Slack replies support at most 50 sections; split the reply".into(),
-            ));
+        chunks.push(body);
+        offset += end;
+        if options.trim_boundary_newlines {
+            while chars.get(offset) == Some(&'\n') {
+                offset += 1;
+            }
         }
-        rest = &rest[end..];
         opened = in_fence;
     }
+    Ok(chunks)
+}
+
+/// Split a single Slack message into expanded sections without breaking code fences.
+pub fn text_blocks(text: &str) -> Result<Vec<Value>> {
+    text_blocks_with_limit(text, 2992)
+}
+
+pub fn text_blocks_with_limit(text: &str, limit: usize) -> Result<Vec<Value>> {
+    if super::events::trim_python(text).is_empty() {
+        return Err(Error::InvalidInput(
+            "Slack replies require readable text".into(),
+        ));
+    }
+    let chunks = split_chunks(
+        text,
+        SplitOptions {
+            limit,
+            ..SplitOptions::default()
+        },
+        Some(50),
+    )?;
+    let blocks = chunks
+        .into_iter()
+        .map(|body| {
+            json!({"type":"section", "expand":true,
+        "text":{"type":"mrkdwn", "text":body, "verbatim":true}})
+        })
+        .collect();
     Ok(blocks)
 }
 

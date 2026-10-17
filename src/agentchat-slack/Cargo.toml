@@ -19,6 +19,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 unicode-general-category = "1"
 regex = "1"
+hmac = "0.12"
+sha2 = "0.10"
+url = "2"
+html5gum = "0.7"
+mime = "0.3"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["ws"] }
