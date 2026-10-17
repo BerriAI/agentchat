@@ -4,6 +4,7 @@ Run with MYPYPATH=python mypy --ignore-missing-imports --follow-imports silent
 scripts/python-typing-smoke.py, using the project environment's Python executable.
 """
 
+from collections.abc import Awaitable, Callable, Mapping
 from typing import assert_type
 
 from agentchat import AgentChat, Conversation, Message, MessageContext, Sender
@@ -12,11 +13,14 @@ from agentchat.channels.base import Channel
 from agentchat.channels.discord import Discord
 from agentchat.channels.imessage import IMessage
 from agentchat.channels.slack import Slack, SlackUser
+from agentchat.channels.slack.host import SlackHost, SlackHostEvent, SlackRouting, ThreadContext
+from agentchat.channels.slack.rendering import SlackMessageRequest, message_request
 from agentchat.channels.teams import Teams
 from agentchat.channels.telegram import Telegram
 from agentchat.channels.telegram.rendering import RenderedText, render
 from agentchat.channels.telegram.transport import TelegramBotClient
 from agentchat.channels.whatsapp import WhatsApp
+from agentchat.rich import RichReply
 from agentchat.state import MemoryState
 
 
@@ -41,3 +45,18 @@ async def check_api(
     assert_type(await whatsapp.reply(message, "hello"), Message)
     assert_type(render("**hello**"), RenderedText)
     assert_type(TelegramBotClient("99:token"), TelegramBotClient)
+
+
+async def check_slack_host(
+    payload: Mapping[str, object],
+    request_page: Callable[[dict[str, object]], Awaitable[Mapping[str, object]]],
+    reply: RichReply,
+) -> None:
+    host = SlackHost(bot_user_id="UBOT00001", exclude_prefixes=("!aside",))
+    assert_type(host.routing_text("hello"), SlackRouting)
+    normalized = host.normalize_event(payload)
+    assert_type(normalized, SlackHostEvent | None)
+    if normalized is not None:
+        assert_type(await host.thread_context(normalized, request_page), ThreadContext)
+        assert_type(await host.thread_context(normalized), ThreadContext)
+    assert_type(message_request(reply, channel_id="CCHANNEL1"), SlackMessageRequest)

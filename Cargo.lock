@@ -74,6 +74,7 @@ dependencies = [
  "async-trait",
  "axum",
  "futures-util",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

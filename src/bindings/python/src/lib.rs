@@ -23,6 +23,7 @@ mod providers {
     pub mod imessage;
     pub mod slack;
     pub mod slack_files;
+    pub mod slack_host;
     pub mod slack_policy;
     pub mod slack_socket;
     pub mod teams;
@@ -183,6 +184,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     runtime::register(module)?;
     providers::slack::register(module)?;
     providers::slack_files::register(module)?;
+    providers::slack_host::register(module)?;
     providers::slack_policy::register(module)?;
     providers::discord::register(module)?;
     providers::imessage::register(module)?;

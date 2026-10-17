@@ -65,6 +65,29 @@ fn slack_rich_payload(py: Python<'_>, content: &Bound<'_, PyAny>) -> PyResult<Py
     )
 }
 #[pyfunction]
+#[pyo3(signature=(reply,*,channel_id,thread_ts=None,message_ts=None,metadata=None,fallback_blocks=true))]
+fn slack_message_request(
+    py: Python<'_>,
+    reply: &Bound<'_, PyAny>,
+    channel_id: &str,
+    thread_ts: Option<&str>,
+    message_ts: Option<&str>,
+    metadata: Option<&Bound<'_, PyAny>>,
+    fallback_blocks: bool,
+) -> PyResult<Py<PyAny>> {
+    let metadata = metadata.map(convert::to_json).transpose()?;
+    let request = agentchat_slack::message_request::MessageRequest::new(
+        &convert::from_rich_reply(reply)?,
+        channel_id,
+        thread_ts,
+        message_ts,
+        metadata.as_ref(),
+        fallback_blocks,
+    )
+    .map_err(policy_error)?;
+    convert::from_json(py, &serde_json::json!(request))
+}
+#[pyfunction]
 #[pyo3(signature=(message,*,origin="web"))]
 fn slack_mirror_payload(
     py: Python<'_>,
@@ -104,6 +127,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(slack_to_message, module)?)?;
     module.add_function(wrap_pyfunction!(slack_text_blocks, module)?)?;
     module.add_function(wrap_pyfunction!(slack_rich_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(slack_message_request, module)?)?;
     module.add_function(wrap_pyfunction!(slack_mirror_payload, module)?)?;
     module.add_function(wrap_pyfunction!(slack_read_mirror, module)?)?;
     module
@@ -120,6 +144,9 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         .setattr("__module__", "agentchat.channels.slack.rendering")?;
     module
         .getattr("slack_rich_payload")?
+        .setattr("__module__", "agentchat.channels.slack.rendering")?;
+    module
+        .getattr("slack_message_request")?
         .setattr("__module__", "agentchat.channels.slack.rendering")?;
     module
         .getattr("slack_mirror_payload")?

@@ -1,5 +1,5 @@
 //! Slack policies shared by native transports and foreign SDK adapters.
-use super::{events, rendering, route::SlackTimestamp, SlackUser};
+use super::{events, route::SlackTimestamp, SlackUser};
 use agentchat_core::{Error, HistoryLimit, Message, Result, Role, Sender};
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
@@ -162,39 +162,13 @@ impl ThreadHistory {
             .as_array()
             .ok_or_else(|| Error::InvalidInput("Slack did not return thread history".into()))?;
         for record in records {
-            let Some(ts) = record["ts"].as_str().and_then(SlackTimestamp::parse) else {
+            let Some(input) = events::history_record(record, self.bot_user_id.as_deref()) else {
                 continue;
             };
-            let Some(sender_id) =
-                events::nonempty(&record["user"]).or_else(|| events::nonempty(&record["bot_id"]))
-            else {
-                continue;
-            };
-            let Some(text) = record.get("text").map_or(Some(""), Value::as_str) else {
-                continue;
-            };
-            let files = events::attachments(&record["files"]);
-            if (events::trim_python(text).is_empty() && files.is_empty())
-                || !ts.is_before(&self.current)
-            {
+            let ts = &input.timestamp;
+            if !ts.is_before(&self.current) {
                 continue;
             }
-            let mirror = self
-                .bot_user_id
-                .as_deref()
-                .and_then(|bot| rendering::read_mirror(record, bot));
-            let role = if Some(sender_id) == self.bot_user_id.as_deref() && mirror.is_none() {
-                Role::Assistant
-            } else {
-                Role::User
-            };
-            let input = mirror.unwrap_or_else(|| rendering::MirroredInput {
-                sender: Sender {
-                    id: sender_id.into(),
-                    display_name: None,
-                },
-                text: text.into(),
-            });
             let item = Message {
                 id: format!(
                     "slack:{}:{}:{ts}",
@@ -208,15 +182,16 @@ impl ThreadHistory {
                 channel: self.source.channel.clone(),
                 sender: input.sender,
                 text: input.text,
-                role,
+                role: input.role,
                 thread_id: Some(self.thread.clone()),
                 addressed: true,
-                attachments: files,
+                attachments: input.files,
                 metadata: json!({
                     "message_timestamp": ts.as_str(),
                     "team_id": self.source.metadata.get("team_id"),
                     "channel_id": self.source.metadata.get("channel_id"),
                     "reply_thread_timestamp": self.thread,
+                    "slack_reference": input.reference,
                 })
                 .as_object()
                 .cloned()
