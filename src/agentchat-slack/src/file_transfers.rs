@@ -1,4 +1,7 @@
 //! File-transfer policy independent of the HTTP or foreign-SDK transport.
+pub mod canvas;
+pub mod failure;
+pub mod reader;
 use agentchat_core::{Attachment, DownloadedFile, Error, UploadFile, UploadedFile};
 use async_trait::async_trait;
 use reqwest::Url;
@@ -26,6 +29,16 @@ pub trait FileTransport: Sync {
         token: &str,
         max_bytes: usize,
     ) -> Result<Vec<u8>, Self::Error>;
+    /// Metadata-aware transports override this to verify headers before buffering.
+    /// The default preserves existing implementations; the caller still verifies bytes.
+    async fn download_file(
+        &self,
+        file: &reader::FileMetadata,
+        token: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, Self::Error> {
+        self.download(&file.url, token, max_bytes).await
+    }
     async fn guard(&self) -> Result<(), Self::Error>;
 }
 
@@ -248,38 +261,30 @@ pub async fn download<T: FileTransport>(
         .request("files.info", &json!({"file":attachment.id}))
         .await
         .map_err(TransferError::Transport)?;
-    let file = &info["file"];
-    if info["ok"] != true || file["id"] != attachment.id || file["is_external"] == true {
-        return Err(Error::InvalidInput(
-            "This Slack file is unavailable. Upload the attachment again.".into(),
-        )
-        .into());
-    }
-    let size = file["size"]
-        .as_u64()
-        .ok_or_else(|| Error::InvalidInput("Slack returned an invalid file size".into()))?;
-    if size > max_bytes as u64 {
-        return Err(download_limit_error(max_bytes).into());
-    }
-    let url = super::events::nonempty(&file["url_private_download"])
-        .or_else(|| super::events::nonempty(&file["url_private"]))
-        .ok_or_else(|| Error::InvalidInput("Slack returned an unsupported file location".into()))?;
+    let state = std::sync::Arc::new(std::sync::Mutex::new(reader::ReadProgress::default()));
+    let file = reader::FileMetadata::parse(&attachment.id, &info, max_bytes, &state).map_err(
+        |failure| match failure.code {
+            failure::FailureCode::HardLimit => download_limit_error(max_bytes),
+            _ => Error::InvalidInput(failure.code.detail().0.into()),
+        },
+    )?;
     transport.guard().await.map_err(TransferError::Transport)?;
     let bytes = transport
-        .download(url, bot_token, max_bytes)
+        .download_file(&file, bot_token, max_bytes)
         .await
         .map_err(TransferError::Transport)?;
     transport.guard().await.map_err(TransferError::Transport)?;
     let mut buffer = DownloadBuffer::new(max_bytes);
     buffer.append(&bytes)?;
+    if !bytes.is_empty() {
+        reader::verify_size(file.size, file.canvas, bytes.len() as u64)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    }
     Ok(DownloadedFile {
         id: attachment.id.clone(),
-        name: file["name"]
-            .as_str()
-            .map(super::events::filename)
-            .unwrap_or_else(|| "attachment".into()),
+        name: file.name,
         content: buffer.finish()?,
-        media_type: file["mimetype"].as_str().map(str::to_owned),
+        media_type: (!file.media_type.is_empty()).then_some(file.media_type),
     })
 }
 

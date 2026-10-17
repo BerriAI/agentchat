@@ -1,5 +1,5 @@
 # Public compatibility signatures; update with the corresponding Rust binding API.
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Literal, TypedDict
 
 from agentchat.models import RichReply
@@ -8,7 +8,14 @@ class SlackMessageRequest(TypedDict):
     method: Literal["chat.postMessage", "chat.update"]
     payload: dict[str, object]
 
-def text_blocks(text: str) -> list[dict[str, object]]: ...
+def text_blocks(text: str, *, limit: int = ...) -> list[dict[str, object]]: ...
+def markdown_text(
+    text: str, *, mentions: Iterable[str] | None = ...,
+    resolve_link: Callable[[str], str | None] | None = ...,
+) -> str: ...
+def split_text(
+    text: str, *, limit: int = ..., trim_boundary_newlines: bool = ...,
+) -> list[str]: ...
 def rich_payload(reply: RichReply) -> dict[str, object]: ...
 def message_request(
     reply: RichReply, *, channel_id: str, thread_ts: str | None = ...,

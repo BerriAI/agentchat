@@ -526,19 +526,20 @@ impl Slack {
             let destination =
                 ReplyDestination::from_source(&from_message(&source)?, workspace.as_deref())
                     .map_err(policy_error)?;
-            let Some(thread) = destination.thread_ts else {
+            if destination.thread_ts.is_none() {
                 return j(json!(false));
-            };
+            }
+            let request = agentchat_slack::delivery::StatusRequest::new(destination, &status);
             let response = acall(
                 &web,
                 "assistant_threads_setStatus",
                 vec![],
-                Some(j(
-                    json!({"channel_id":destination.channel_id,"thread_ts":thread,"status":status}),
-                )?),
+                Some(j(request.payload)?),
             )
             .await?;
-            if value(&response)?["ok"] != true {
+            if agentchat_slack::delivery::StatusRequest::response(value(&response)?).status
+                != agentchat_slack::delivery::DeliveryStatus::Confirmed
+            {
                 return Err(PyRuntimeError::new_err(
                     "Slack working status could not be confirmed",
                 ));

@@ -13,14 +13,17 @@ from agentchat.channels.base import Channel
 from agentchat.channels.discord import Discord
 from agentchat.channels.imessage import IMessage
 from agentchat.channels.slack import Slack, SlackUser
+from agentchat.channels.slack.delivery import SlackDelivery, SlackDeliveryResult
+from agentchat.channels.slack.files import SlackDownloadedFile, SlackFileReader
 from agentchat.channels.slack.host import SlackHost, SlackHostEvent, SlackRouting, ThreadContext
-from agentchat.channels.slack.rendering import SlackMessageRequest, message_request
+from agentchat.channels.slack.rendering import SlackMessageRequest, markdown_text, message_request
+from agentchat.channels.slack.webhook import SlackWebhook, SlackWebhookEvent
 from agentchat.channels.teams import Teams
 from agentchat.channels.telegram import Telegram
 from agentchat.channels.telegram.rendering import RenderedText, render
 from agentchat.channels.telegram.transport import TelegramBotClient
 from agentchat.channels.whatsapp import WhatsApp
-from agentchat.rich import RichReply
+from agentchat.models import RichReply
 from agentchat.state import MemoryState
 
 
@@ -60,3 +63,32 @@ async def check_slack_host(
         assert_type(await host.thread_context(normalized, request_page), ThreadContext)
         assert_type(await host.thread_context(normalized), ThreadContext)
     assert_type(message_request(reply, channel_id="CCHANNEL1"), SlackMessageRequest)
+
+
+async def check_slack_services(
+    raw: bytes,
+    headers: Mapping[str, str],
+    request: Callable[[str, str, dict[str, object]], Awaitable[Mapping[str, object]]],
+    file_request: Callable[[str, dict[str, object], str], Awaitable[Mapping[str, object]]],
+    token: Callable[[], Awaitable[str]],
+    authorize: Callable[[], Awaitable[None]],
+) -> None:
+    envelope = SlackWebhook("secret").event(raw, headers)
+    assert_type(envelope, SlackWebhookEvent)
+    if envelope["kind"] == "challenge":
+        assert_type(envelope["challenge"], str)
+    delivery = SlackDelivery(request)
+    plan = message_request(RichReply(text="hello"), channel_id="CCHANNEL1")
+    assert_type(await delivery.send_request(plan), SlackDeliveryResult)
+    assert_type(
+        await delivery.reconcile(
+            "CCHANNEL1", "1792100000.000001", event_type="reply", event_id="1",
+        ),
+        SlackDeliveryResult,
+    )
+    reader = SlackFileReader(max_bytes=1024)
+    assert_type(
+        await reader.read("FFILE0001", token=token, request=file_request, authorize=authorize),
+        SlackDownloadedFile,
+    )
+    assert_type(markdown_text("**hello**"), str)

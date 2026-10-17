@@ -4,6 +4,7 @@
 //! provider receipt; a failed write may have an uncertain delivery outcome.
 //! Socket acknowledgements accept bounded in-memory work, not a durable queue.
 
+pub mod delivery;
 pub mod events;
 pub mod file_transfers;
 mod files;
@@ -15,6 +16,7 @@ mod route;
 mod socket;
 mod transport;
 pub mod web_api;
+pub mod webhook;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -455,14 +457,21 @@ impl Slack {
         let Some(thread) = destination.thread_timestamp else {
             return Ok(false);
         };
-        self.inner
+        let request = delivery::StatusRequest::new(
+            policy::ReplyDestination::validate(&destination.channel_id, Some(thread.as_str()))?,
+            status,
+        );
+        let response = self
+            .inner
             .client
-            .call(
-                "assistant.threads.setStatus",
-                &json!({"channel_id":destination.channel_id,
-            "thread_ts":thread,"status":status}),
-            )
+            .call(request.method, &request.payload)
             .await?;
+        if delivery::StatusRequest::response(response).status != delivery::DeliveryStatus::Confirmed
+        {
+            return Err(Error::Transport(
+                "Slack working status could not be confirmed".into(),
+            ));
+        }
         Ok(true)
     }
 

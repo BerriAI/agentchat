@@ -17,6 +17,7 @@ def transport(monkeypatch, *, chunks=(b"image",), status=200):
         def __init__(self):
             self.status = status
             self.content = self
+            self.headers = {}
 
         async def __aenter__(self):
             return self
@@ -30,7 +31,8 @@ def transport(monkeypatch, *, chunks=(b"image",), status=200):
 
     class Session:
         def __init__(self, **kwargs):
-            assert kwargs["timeout"].total == 30
+            assert kwargs["timeout"].total == 45
+            assert kwargs["auto_decompress"] is False
 
         async def __aenter__(self):
             return self
@@ -96,7 +98,8 @@ async def test_download_uses_fresh_metadata_and_keeps_bytes_out_of_history(monke
     assert history == tuple(received)
     assert requests == [("files.info", {"http_verb": "GET", "params": {"file": "F12345678"}})]
     assert calls == [(metadata()["url_private_download"], {
-        "headers": {"Authorization": "Bearer bot-only"}, "allow_redirects": False,
+        "headers": {"Authorization": "Bearer bot-only", "Accept-Encoding": "identity"},
+        "allow_redirects": False,
     })]
 
 
@@ -178,8 +181,8 @@ async def test_invalid_metadata_fails_before_downloading(monkeypatch, overrides,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chunks,status,error", [
-    ((b"12345", b"678901"), 200, "download limit"),
-    ((), 200, "empty"), ((b"image",), 302, "Could not read"),
+    ((b"12345", b"678901"), 200, "storage budget"),
+    ((), 200, "declared size"), ((b"image",), 302, "Could not read"),
     ((b"image",), 403, "Could not read"),
 ])
 async def test_download_bounds_actual_bytes_and_never_follows_redirects(
@@ -188,7 +191,7 @@ async def test_download_bounds_actual_bytes_and_never_follows_redirects(
     calls = transport(monkeypatch, chunks=chunks, status=status)
 
     async def request(api, payload):
-        return {"ok": True, "file": metadata(size=1)}
+        return {"ok": True, "file": metadata(size=10)}
 
     with pytest.raises((ValueError, RuntimeError), match=error):
         await slack_files.download_slack_file(Attachment("F12345678"), bot_token="secret",

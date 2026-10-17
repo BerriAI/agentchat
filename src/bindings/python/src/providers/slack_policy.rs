@@ -51,11 +51,57 @@ fn slack_to_message(
         .unwrap_or_else(|| Ok(py.None()))
 }
 #[pyfunction]
-fn slack_text_blocks(py: Python<'_>, text: &str) -> PyResult<Py<PyAny>> {
+#[pyo3(signature=(text,*,limit=2992))]
+fn slack_text_blocks(py: Python<'_>, text: &str, limit: usize) -> PyResult<Py<PyAny>> {
     convert::from_json(
         py,
-        &Value::Array(rendering::text_blocks(text).map_err(policy_error)?),
+        &Value::Array(rendering::text_blocks_with_limit(text, limit).map_err(policy_error)?),
     )
+}
+#[pyfunction]
+#[pyo3(signature=(text,*,mentions=None,resolve_link=None))]
+fn slack_markdown_text(
+    text: &str,
+    mentions: Option<&Bound<'_, PyAny>>,
+    resolve_link: Option<&Bound<'_, PyAny>>,
+) -> PyResult<String> {
+    let allowed_mentions = mentions
+        .map(|values| {
+            values
+                .try_iter()?
+                .map(|value| value?.extract::<String>())
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    rendering::markdown_text(
+        text,
+        rendering::MarkdownOptions {
+            allowed_mentions: &allowed_mentions,
+        },
+        |target| {
+            resolve_link
+                .map(|resolve| resolve.call1((target,))?.extract::<Option<String>>())
+                .transpose()
+                .map(Option::flatten)
+        },
+    )
+}
+#[pyfunction]
+#[pyo3(signature=(text,*,limit=2600,trim_boundary_newlines=false))]
+fn slack_split_text(
+    text: &str,
+    limit: usize,
+    trim_boundary_newlines: bool,
+) -> PyResult<Vec<String>> {
+    rendering::split_text(
+        text,
+        rendering::SplitOptions {
+            limit,
+            trim_boundary_newlines,
+        },
+    )
+    .map_err(policy_error)
 }
 #[pyfunction]
 fn slack_rich_payload(py: Python<'_>, content: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -126,6 +172,8 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(slack_filename, module)?)?;
     module.add_function(wrap_pyfunction!(slack_to_message, module)?)?;
     module.add_function(wrap_pyfunction!(slack_text_blocks, module)?)?;
+    module.add_function(wrap_pyfunction!(slack_markdown_text, module)?)?;
+    module.add_function(wrap_pyfunction!(slack_split_text, module)?)?;
     module.add_function(wrap_pyfunction!(slack_rich_payload, module)?)?;
     module.add_function(wrap_pyfunction!(slack_message_request, module)?)?;
     module.add_function(wrap_pyfunction!(slack_mirror_payload, module)?)?;
@@ -141,6 +189,12 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         .setattr("__module__", "agentchat.channels.slack.events")?;
     module
         .getattr("slack_text_blocks")?
+        .setattr("__module__", "agentchat.channels.slack.rendering")?;
+    module
+        .getattr("slack_markdown_text")?
+        .setattr("__module__", "agentchat.channels.slack.rendering")?;
+    module
+        .getattr("slack_split_text")?
         .setattr("__module__", "agentchat.channels.slack.rendering")?;
     module
         .getattr("slack_rich_payload")?
