@@ -47,11 +47,30 @@ def test_card_only_reply_does_not_repeat_its_accessible_fallback():
     assert request["payload"]["attachments"] == [card]
 
 
+def test_author_override_is_used_for_posts_and_ignored_for_updates():
+    posted = message_request(
+        RichReply("Continue"), channel_id="C123",
+        username="Ishaan Jaffer", icon_url="https://example.com/avatar.png",
+    )
+    assert posted["payload"]["username"] == "Ishaan Jaffer"
+    assert posted["payload"]["icon_url"] == "https://example.com/avatar.png"
+
+    updated = message_request(
+        RichReply("Continue"), channel_id="C123", message_ts="123.002",
+        username="Ishaan Jaffer", icon_url="https://example.com/avatar.png",
+    )
+    assert "username" not in updated["payload"]
+    assert "icon_url" not in updated["payload"]
+
+
 @pytest.mark.parametrize("kwargs", [
     {"channel_id": "invalid"},
     {"channel_id": "C123", "thread_ts": "invalid"},
     {"channel_id": "C123", "message_ts": "invalid"},
     {"channel_id": "C123", "metadata": []},
+    {"channel_id": "C123", "username": "  "},
+    {"channel_id": "C123", "username": "Ishaan", "icon_url": "http://example.com/avatar.png"},
+    {"channel_id": "C123", "icon_url": "https://example.com/avatar.png"},
 ])
 def test_request_rejects_invalid_provider_inputs(kwargs):
     with pytest.raises(ValueError):

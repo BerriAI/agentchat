@@ -377,7 +377,15 @@ impl ThreadContextReader {
         } else {
             input.reference
         };
-        self.store(ts.as_str(), &input.sender.id, source);
+        self.store(
+            ts.as_str(),
+            input
+                .sender
+                .display_name
+                .as_deref()
+                .unwrap_or(&input.sender.id),
+            source,
+        );
     }
     fn store(&mut self, ts: &str, author: &str, source: Value) {
         if source.as_object().is_none_or(|v| v.is_empty()) {

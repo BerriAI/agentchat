@@ -342,6 +342,8 @@ Durable hosts can also delegate routing and update payloads to
 `agentchat.channels.slack.rendering.message_request`. It validates the channel and
 timestamps, renders the reply, selects `chat.postMessage` or `chat.update`, and
 clears old attachments on updates. It does not send, authenticate or retry:
+Posting as a custom username or avatar uses Slack's `chat:write.customize` bot
+scope; `username` and `icon_url` apply only to new posts, not updates.
 
 ```python
 from agentchat import RichReply

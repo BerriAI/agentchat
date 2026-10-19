@@ -116,7 +116,9 @@ pub(crate) fn history_record(record: &Value, bot_user_id: Option<&str>) -> Optio
     let input = mirror.unwrap_or_else(|| super::rendering::MirroredInput {
         sender: Sender {
             id: sender.into(),
-            display_name: None,
+            display_name: (Some(sender) == bot_user_id)
+                .then(|| nonempty(&record["username"]).map(str::to_owned))
+                .flatten(),
         },
         text: text.into(),
     });

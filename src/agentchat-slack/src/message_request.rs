@@ -4,6 +4,7 @@ use crate::{policy::ReplyDestination, rendering, route::SlackTimestamp};
 use agentchat_core::{Error, Result, RichReply};
 use serde::Serialize;
 use serde_json::{json, Value};
+use url::Url;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum MessageMethod {
@@ -11,6 +12,47 @@ pub enum MessageMethod {
     Post,
     #[serde(rename = "chat.update")]
     Update,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlackAuthor {
+    pub username: String,
+    pub icon_url: Option<String>,
+}
+
+impl SlackAuthor {
+    fn validated(&self) -> Result<Self> {
+        let username = self
+            .username
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if username.is_empty() || username.chars().count() > 80 {
+            return Err(Error::InvalidInput(
+                "Slack author username must contain 1 to 80 characters".into(),
+            ));
+        }
+        if let Some(icon_url) = &self.icon_url {
+            let parsed = Url::parse(icon_url).map_err(|_| {
+                Error::InvalidInput("Slack author icon_url must be an HTTPS URL".into())
+            })?;
+            if icon_url.chars().count() > 2048
+                || parsed.scheme() != "https"
+                || parsed.host_str().is_none()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+            {
+                return Err(Error::InvalidInput(
+                    "Slack author icon_url must be an HTTPS URL without userinfo, at most 2048 characters"
+                        .into(),
+                ));
+            }
+        }
+        Ok(Self {
+            username,
+            icon_url: self.icon_url.clone(),
+        })
+    }
 }
 
 /// A prepared request, with no transport, retry, authorization or queue policy.
@@ -27,6 +69,7 @@ impl MessageRequest {
         thread_ts: Option<&str>,
         message_ts: Option<&str>,
         metadata: Option<&Value>,
+        author: Option<&SlackAuthor>,
         fallback_blocks: bool,
     ) -> Result<Self> {
         let destination = ReplyDestination::validate(channel_id, thread_ts)?;
@@ -41,6 +84,7 @@ impl MessageRequest {
                 "Slack message metadata must be an object".into(),
             ));
         }
+        let author = author.map(SlackAuthor::validated).transpose()?;
         let mut payload = rendering::rich_payload_with_fallback_blocks(reply, fallback_blocks)?;
         payload["channel"] = json!(destination.channel_id);
         let method = if let Some(timestamp) = timestamp {
@@ -54,6 +98,12 @@ impl MessageRequest {
         } else {
             if let Some(thread) = destination.thread_ts {
                 payload["thread_ts"] = json!(thread);
+            }
+            if let Some(author) = author {
+                payload["username"] = json!(author.username);
+                if let Some(icon_url) = author.icon_url {
+                    payload["icon_url"] = json!(icon_url);
+                }
             }
             MessageMethod::Post
         };
@@ -85,6 +135,7 @@ mod tests {
             Some("123.001"),
             None,
             Some(&metadata),
+            None,
             true,
         )
         .unwrap();
@@ -107,6 +158,7 @@ mod tests {
             Some("123.001"),
             Some("123.002"),
             None,
+            None,
             true,
         )
         .unwrap();
@@ -124,16 +176,81 @@ mod tests {
             ("C123", Some("bad"), None),
             ("C123", None, Some("bad")),
         ] {
-            assert!(MessageRequest::new(&reply(), channel, thread, message, None, true).is_err());
+            assert!(
+                MessageRequest::new(&reply(), channel, thread, message, None, None, true).is_err()
+            );
         }
-        assert!(MessageRequest::new(&reply(), "C123", None, None, Some(&json!([])), true).is_err());
+        assert!(
+            MessageRequest::new(&reply(), "C123", None, None, Some(&json!([])), None, true)
+                .is_err()
+        );
     }
 
     #[test]
     fn preserves_explicit_empty_blocks_for_card_only_and_plain_updates() {
         let request =
-            MessageRequest::new(&reply(), "C123", None, Some("123.002"), None, false).unwrap();
+            MessageRequest::new(&reply(), "C123", None, Some("123.002"), None, None, false)
+                .unwrap();
         assert_eq!(request.payload["blocks"], json!([]));
         assert_eq!(request.payload["attachments"], json!([]));
+    }
+
+    #[test]
+    fn posts_with_a_validated_author_override() {
+        let author = SlackAuthor {
+            username: "  Ishaan \n Jaffer ".into(),
+            icon_url: Some("https://example.com/avatar.png".into()),
+        };
+        let request =
+            MessageRequest::new(&reply(), "C123", None, None, None, Some(&author), true).unwrap();
+        assert_eq!(request.payload["username"], "Ishaan Jaffer");
+        assert_eq!(
+            request.payload["icon_url"],
+            "https://example.com/avatar.png"
+        );
+    }
+
+    #[test]
+    fn updates_ignore_author_overrides() {
+        let author = SlackAuthor {
+            username: "Ishaan".into(),
+            icon_url: Some("https://example.com/avatar.png".into()),
+        };
+        let request = MessageRequest::new(
+            &reply(),
+            "C123",
+            None,
+            Some("123.002"),
+            None,
+            Some(&author),
+            true,
+        )
+        .unwrap();
+        assert_eq!(request.method, MessageMethod::Update);
+        assert!(request.payload.get("username").is_none());
+        assert!(request.payload.get("icon_url").is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_author_overrides() {
+        for author in [
+            SlackAuthor {
+                username: " \n\t ".into(),
+                icon_url: None,
+            },
+            SlackAuthor {
+                username: "Ishaan".into(),
+                icon_url: Some("http://example.com/avatar.png".into()),
+            },
+            SlackAuthor {
+                username: "Ishaan".into(),
+                icon_url: Some("https://user:pass@example.com/avatar.png".into()),
+            },
+        ] {
+            assert!(
+                MessageRequest::new(&reply(), "C123", None, None, None, Some(&author), true)
+                    .is_err()
+            );
+        }
     }
 }
