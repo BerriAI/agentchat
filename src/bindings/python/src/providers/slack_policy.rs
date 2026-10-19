@@ -65,7 +65,7 @@ fn slack_rich_payload(py: Python<'_>, content: &Bound<'_, PyAny>) -> PyResult<Py
     )
 }
 #[pyfunction]
-#[pyo3(signature=(reply,*,channel_id,thread_ts=None,message_ts=None,metadata=None,fallback_blocks=true))]
+#[pyo3(signature=(reply,*,channel_id,thread_ts=None,message_ts=None,metadata=None,username=None,icon_url=None,fallback_blocks=true))]
 fn slack_message_request(
     py: Python<'_>,
     reply: &Bound<'_, PyAny>,
@@ -73,15 +73,25 @@ fn slack_message_request(
     thread_ts: Option<&str>,
     message_ts: Option<&str>,
     metadata: Option<&Bound<'_, PyAny>>,
+    username: Option<String>,
+    icon_url: Option<String>,
     fallback_blocks: bool,
 ) -> PyResult<Py<PyAny>> {
     let metadata = metadata.map(convert::to_json).transpose()?;
+    if username.is_none() && icon_url.is_some() {
+        return Err(PyValueError::new_err(
+            "Slack message icon_url requires a username",
+        ));
+    }
+    let author = username
+        .map(|username| agentchat_slack::message_request::SlackAuthor { username, icon_url });
     let request = agentchat_slack::message_request::MessageRequest::new(
         &convert::from_rich_reply(reply)?,
         channel_id,
         thread_ts,
         message_ts,
         metadata.as_ref(),
+        author.as_ref(),
         fallback_blocks,
     )
     .map_err(policy_error)?;

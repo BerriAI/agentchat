@@ -13,5 +13,6 @@ def rich_payload(reply: RichReply) -> dict[str, object]: ...
 def message_request(
     reply: RichReply, *, channel_id: str, thread_ts: str | None = ...,
     message_ts: str | None = ..., metadata: Mapping[str, object] | None = ...,
+    username: str | None = ..., icon_url: str | None = ...,
     fallback_blocks: bool = ...,
 ) -> SlackMessageRequest: ...

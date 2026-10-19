@@ -124,6 +124,18 @@ async def test_paginated_history_excludes_future_other_threads_asides_and_duplic
 
 
 @pytest.mark.asyncio
+async def test_custom_bot_username_is_attributed_in_thread_context():
+    async def request(_):
+        return page([
+            message("1780000000.000005", text="continue", user=BOT, username="Ishaan Jaffer"),
+            message(ORIGIN["message_ts"], text="What next?"),
+        ])
+
+    context = await HOST.thread_context(ORIGIN, request)
+    assert context["messages"][0]["author"] == "Ishaan Jaffer"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("first_page", [True, False])
 async def test_provider_failure_retains_good_pages_and_reports_coverage(first_page):
     calls = 0
