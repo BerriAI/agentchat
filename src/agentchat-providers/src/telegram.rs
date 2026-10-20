@@ -228,10 +228,11 @@ pub fn normalize(update: &Value, bot: i64, username: &str) -> Option<Message> {
         ("", &[][..])
     };
     let address = strip_bot_address(text, entities, bot, username);
-    if chat.kind != "private"
-        && !address.is_addressed
-        && message["reply_to_message"]["from"]["id"].as_i64() != Some(bot)
-    {
+    let reply = &message["reply_to_message"];
+    // Plain topic messages reply to the topic's creation message, which the bot may own.
+    let replies_to_bot =
+        reply["from"]["id"].as_i64() == Some(bot) && reply.get("forum_topic_created").is_none();
+    if chat.kind != "private" && !address.is_addressed && !replies_to_bot {
         return None;
     }
     let files = attachments(message);
@@ -739,6 +740,28 @@ mod tests {
         );
         assert!(a.is_addressed);
         assert_eq!(a.text, "😀  hi");
+    }
+    #[test]
+    fn bot_created_forum_topic_root_is_not_a_reply_to_the_bot() {
+        let update = |reply: Value| {
+            json!({"update_id": 1, "message": {
+                "message_id": 20,
+                "chat": {"id": -100, "type": "supergroup", "is_forum": true},
+                "from": {"id": 5, "is_bot": false, "first_name": "Alice"},
+                "is_topic_message": true,
+                "message_thread_id": 7,
+                "reply_to_message": reply,
+                "text": "just chatting",
+            }})
+        };
+        // Telegram links every plain message in a topic to its creation message.
+        let root = json!({
+            "message_id": 7, "from": {"id": 1, "is_bot": true},
+            "forum_topic_created": {"name": "Support", "icon_color": 7322096},
+        });
+        assert!(normalize(&update(root), 1, "bot").is_none());
+        let answer = json!({"message_id": 8, "from": {"id": 1, "is_bot": true}, "text": "hi"});
+        assert!(normalize(&update(answer), 1, "bot").is_some());
     }
     #[test]
     fn malformed_utf16_and_expanding_casefold_are_safe() {

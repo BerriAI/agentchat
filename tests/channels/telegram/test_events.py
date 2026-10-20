@@ -53,6 +53,15 @@ def test_text_mention_and_reply_to_bot_are_addressed():
     assert read(group_update("thanks", reply_to_message=reply)).text == "thanks"
 
 
+def test_topic_chatter_under_a_bot_created_topic_is_not_addressed():
+    # Plain topic messages carry the topic's creation message as reply_to_message.
+    root = {"message_id": 7, "from": dict(BOT), "forum_topic_created": {"name": "Support"}}
+    topic = {"is_topic_message": True, "message_thread_id": 7}
+    assert read(group_update("just chatting", reply_to_message=root, **topic)) is None
+    answer = {"message_id": 8, "from": dict(BOT), "text": "hi"}
+    assert read(group_update("thanks", reply_to_message=answer, **topic)).text == "thanks"
+
+
 @pytest.mark.parametrize(
     "update",
     [
