@@ -58,6 +58,7 @@ async def check_slack_host(
     normalized = host.normalize_event(payload)
     assert_type(normalized, SlackHostEvent | None)
     if normalized is not None:
+        assert_type(host.accepts(normalized, subscribed=True), bool)
         assert_type(await host.acknowledge(normalized, request_ack), bool)
         assert_type(await host.thread_context(normalized, request_page), ThreadContext)
         assert_type(await host.thread_context(normalized), ThreadContext)

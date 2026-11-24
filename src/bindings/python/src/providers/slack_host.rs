@@ -2,8 +2,8 @@
 use super::{slack_files::policy_error, transport::*};
 use crate::{convert, host};
 use agentchat_slack::host::{
-    ack_accepted, ContextLimits, CurrentReference, SlackHost as CoreHost, ThreadContextReader,
-    ThreadOrigin,
+    ack_accepted, ContextLimits, CurrentReference, SlackHost as CoreHost, SlackHostEvent,
+    ThreadContextReader, ThreadOrigin,
 };
 use pyo3::{
     exceptions::{PyException, PyTimeoutError, PyValueError},
@@ -44,6 +44,12 @@ impl SlackHost {
             .normalize_event(&convert::to_json(payload)?)
             .map_err(policy_error)?;
         convert::from_json(py, &json!(event))
+    }
+    #[pyo3(signature=(event,*,subscribed=false))]
+    fn accepts(&self, event: &Bound<'_, PyAny>, subscribed: bool) -> PyResult<bool> {
+        let event: SlackHostEvent = serde_json::from_value(convert::to_json(event)?)
+            .map_err(|_| PyValueError::new_err("Expected a normalized Slack host event"))?;
+        self.inner.accepts(&event, subscribed).map_err(policy_error)
     }
     #[pyo3(signature=(event,request,*,timeout=3.0))]
     fn acknowledge(

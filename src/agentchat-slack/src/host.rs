@@ -46,7 +46,7 @@ pub struct CurrentReference {
     pub data: Value,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SlackHostEvent {
     #[serde(flatten)]
     pub origin: ThreadOrigin,
@@ -73,6 +73,13 @@ fn timestamp(value: &str) -> Option<SlackTimestamp> {
         .flatten()
 }
 impl SlackHost {
+    /// Apply the channel's follow-up rule using the host's durable subscription snapshot.
+    /// The caller must still authorize the sender and enforce application pause policy.
+    pub fn accepts(&self, event: &SlackHostEvent, subscribed: bool) -> Result<bool> {
+        self.validate_origin(&event.origin)?;
+        Ok(!event.excluded && policy::accepts_message(event.direct || event.mentioned, subscribed))
+    }
+
     pub fn acknowledgement(&self, origin: &ThreadOrigin) -> Option<Value> {
         self.ack_emoji
             .as_deref()

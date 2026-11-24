@@ -4,6 +4,11 @@ use agentchat_core::{Error, HistoryLimit, Message, Result, Role, Sender};
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
 
+/// Route explicit requests and followed conversations. Subscription is not authorization.
+pub fn accepts_message(addressed: bool, subscribed: bool) -> bool {
+    addressed || subscribed
+}
+
 #[derive(Clone, Debug)]
 pub struct ReplyDestination {
     pub channel_id: String,
