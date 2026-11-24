@@ -483,8 +483,8 @@ impl Slack {
                 ))
             })?;
             if let Some(message) = message {
-                if message.metadata.get("requires_subscription") == Some(&json!(true))
-                    && !extract::<bool>(
+                let subscribed = !message.addressed
+                    && extract::<bool>(
                         &acall(
                             &threads,
                             "contains",
@@ -492,8 +492,8 @@ impl Slack {
                             None,
                         )
                         .await?,
-                    )?
-                {
+                    )?;
+                if !agentchat_slack::policy::accepts_message(message.addressed, subscribed) {
                     return Ok(none());
                 }
                 let message = Python::attach(|py| convert::to_message(py, &message))?;

@@ -317,13 +317,13 @@ impl Slack {
         else {
             return Ok(None);
         };
-        if message.metadata.get("requires_subscription") == Some(&Value::Bool(true))
-            && !self
+        let subscribed = !message.addressed
+            && self
                 .inner
                 .subscriptions
                 .contains(message.conversation_id.as_ref())
-                .await?
-        {
+                .await?;
+        if !policy::accepts_message(message.addressed, subscribed) {
             return Ok(None);
         }
         Ok(Some(message))

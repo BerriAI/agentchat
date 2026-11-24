@@ -535,9 +535,24 @@ host = SlackHost(
     exclude_prefixes=("!aside",),  # Optional application policy.
 )
 event = host.normalize_event(authenticated_payload)
-if event is not None:
+if event is not None and host.accepts(event, subscribed=has_saved_binding(event)):
+    # Authorize this sender and check application pause/deletion policy first.
     context = await host.thread_context(event, authorized_page_request)
 ```
+
+`host.accepts(event, subscribed=...)` shares the full Slack channel's routing
+policy: direct messages and explicit bot mentions are accepted; unmentioned
+thread replies require a subscription. Pass an event returned by
+`normalize_event`. Unrelated channel messages, bot echoes, quoted mentions and
+configured exclusions retain the normal decoding rules.
+
+`has_saved_binding` above is application code: look up the event's workspace,
+channel and thread in your existing conversation store. Pass that saved
+subscription state rather than maintaining a second SDK store. The check does
+no I/O and creates no subscriptions or agent turns. Subscribe only after your
+application accepts the conversation, and check each sender's access, session
+state and pause policy before admitting a turn. Rechecking a saved binding is
+still the application's responsibility.
 
 After deciding to handle a normalized event, call `await host.acknowledge(event,
 request)` before slower work such as reading thread context. This best-effort

@@ -65,6 +65,8 @@ fn slack_rich_payload(py: Python<'_>, content: &Bound<'_, PyAny>) -> PyResult<Py
     )
 }
 #[pyfunction]
+// Explicit keyword arguments preserve the public Python interface.
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature=(reply,*,channel_id,thread_ts=None,message_ts=None,metadata=None,username=None,icon_url=None,fallback_blocks=true))]
 fn slack_message_request(
     py: Python<'_>,

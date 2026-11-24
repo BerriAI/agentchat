@@ -35,6 +35,37 @@ def event(text=f"<@{BOT}> {QUESTION}", **extra):
     }}
 
 
+@pytest.mark.parametrize(("text", "extra", "subscribed", "accepted"), [
+    ("continue", {}, False, False),
+    ("continue", {}, True, True),
+    (f"<@{BOT}> continue", {}, False, True),
+    (f"`<@{BOT}>` continue", {}, False, False),
+    (f"`<@{BOT}>` continue", {}, True, True),
+    ("continue", {"channel": "DTEST0001", "channel_type": "im"}, False, True),
+    ("continue", {"thread_ts": None}, True, False),
+    ("continue", {"bot_id": "BTEST0001"}, True, False),
+    ("!aside continue", {}, True, False),
+])
+def test_host_routes_mentions_dms_and_only_subscribed_followups(text, extra, subscribed, accepted):
+    normalized = HOST.normalize_event(event(text, **extra))
+    assert (normalized is not None and HOST.accepts(normalized, subscribed=subscribed)) is accepted
+
+
+def test_host_subscription_snapshot_can_be_revoked_without_changing_event():
+    normalized = HOST.normalize_event(event("continue"))
+    assert normalized is not None
+    assert HOST.accepts(normalized, subscribed=True)
+    assert not HOST.accepts(normalized)
+    other = SlackHost(bot_user_id=BOT, workspace_id="TOTHER001")
+    with pytest.raises(ValueError, match="workspace"):
+        other.accepts(normalized, subscribed=True)
+
+
+def test_host_requires_a_normalized_event():
+    with pytest.raises(ValueError, match="normalized"):
+        HOST.accepts({"mentioned": True}, subscribed=True)
+
+
 @pytest.mark.asyncio
 async def test_parent_link_unfurl_and_current_extras_survive_without_repeating_question():
     payload = event()
